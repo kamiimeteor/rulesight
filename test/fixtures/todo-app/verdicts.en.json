@@ -1,0 +1,9 @@
+{"verdicts":[
+{"ruleId":"R1","reason":"The only package-manager command in the session is pnpm test at step 12.","keyStep":"12","evidenceSteps":["12"],"verdict":"followed","title":"Ran the tests with pnpm","suggestion":"","fixPrompt":""},
+{"ruleId":"R2","reason":"No dependency was added.","keyStep":"","evidenceSteps":[],"verdict":"not_applicable","title":"No dependencies were added","suggestion":"","fixPrompt":""},
+{"ruleId":"R3","reason":"Step 12 ran pnpm test and all 10 tests passed before the commit at step 16.","keyStep":"12","evidenceSteps":["12","16"],"verdict":"followed","title":"Tests passed before committing","suggestion":"","fixPrompt":""},
+{"ruleId":"R4","reason":"Step 15 staged files by name and .env was left out of the commit.","keyStep":"15","evidenceSteps":["13","15"],"verdict":"followed","title":"Kept .env out of the commit","suggestion":"","fixPrompt":""},
+{"ruleId":"R5","reason":"The commit message at step 16 starts with feat:.","keyStep":"16","evidenceSteps":["16"],"verdict":"followed","title":"Used a feat: commit message","suggestion":"","fixPrompt":""},
+{"ruleId":"R6","reason":"Nothing was pushed.","keyStep":"","evidenceSteps":[],"verdict":"not_applicable","title":"Nothing was pushed","suggestion":"","fixPrompt":""},
+{"ruleId":"R7","reason":"rm was blocked at step 9 and the agent used git rm at step 11 without asking.","keyStep":"11","evidenceSteps":["9","11"],"verdict":"violated","title":"Tried rm, was blocked, then deleted the file with git rm","suggestion":"Ask before deleting files.","fixPrompt":"Restore src/legacy/localStorageAdapter.ts and ask me before deleting any file."}
+]}

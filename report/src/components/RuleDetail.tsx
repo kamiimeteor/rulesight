@@ -6,8 +6,9 @@ import { OriginalText } from "@/components/OriginalText";
 import type { Feedback, FeedbackMap } from "@/hooks/use-feedback";
 import { downloadText } from "@/lib/download";
 import { fileName } from "@/lib/format";
+import type { Strings } from "@/lib/i18n";
 import { evidenceOf, keyStepOf, ruleOf, stepOf, type ReportModel } from "@/lib/model";
-import { STEP_KIND_LABEL, TONE } from "@/lib/tone";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import type { Verdict } from "../../../src/verdict.ts";
 
@@ -34,6 +35,7 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
   const marked = feedback[verdict.ruleId];
   const rule = ruleOf(model, verdict.ruleId);
   const tone = TONE[verdict.verdict];
+  const { t } = model;
   const keyStep = keyStepOf(verdict);
   const evidence = [...evidenceOf(verdict)].sort((a, b) => (model.stepIndex.get(a) ?? 0) - (model.stepIndex.get(b) ?? 0));
 
@@ -42,21 +44,21 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
       <div className="min-h-0 flex-1 overflow-auto px-[22px] py-5">
         <div className="flex items-center gap-2.5">
           <Badge variant="secondary" className={cn("h-[22px] rounded-md px-2", tone.soft)}>
-            {tone.label}
+            {t.verdict[verdict.verdict]}
           </Badge>
           <span className="font-mono text-xs text-muted-foreground">
-            {fileName(rule.source.file)} 第 {rule.source.line} 行
+            {t.ruleSource(fileName(rule.source.file), rule.source.line)}
           </span>
         </div>
         <h2 className="mt-3 mb-1.5 text-lg leading-[1.45] font-semibold tracking-tight">{verdict.title}</h2>
-        <div className="rounded-lg bg-muted px-3 py-2 text-[13px] text-zinc-700">规则：{rule.text}</div>
+        <div className="rounded-lg bg-muted px-3 py-2 text-[13px] text-zinc-700">{t.ruleText(rule.text)}</div>
 
-        <Section title="发生了什么">
+        <Section title={t.whatHappened}>
           <div>{verdict.reason}</div>
         </Section>
 
         {evidence.length > 0 && (
-          <Section title="证据">
+          <Section title={t.evidence}>
             <ol className="ml-[5px] border-l pl-4">
               {evidence.map((n) => {
                 const step = stepOf(model, n);
@@ -71,21 +73,21 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
                     />
                     <div>
                       <span className="font-mono text-xs text-muted-foreground">
-                        第 {n} 步 · {STEP_KIND_LABEL[step.kind]}{" "}
+                        {t.stepKindSeparator(n, t.stepKind[step.kind])}{" "}
                       </span>
                       <span className={cn(isKey && "font-semibold")}>{step.summary}</span>
                       {isKey && (
                         <Badge variant="secondary" className="ml-2 h-5 rounded-md bg-muted px-2 text-foreground">
-                          判定依据
+                          {t.keyStepBadge}
                         </Badge>
                       )}
                     </div>
                     {isKey ? (
-                      <OriginalText step={step} />
+                      <OriginalText step={step} t={t} />
                     ) : (
                       <details>
-                        <summary className="mt-0.5 cursor-pointer text-[12.5px] text-muted-foreground">看原文</summary>
-                        <OriginalText step={step} />
+                        <summary className="mt-0.5 cursor-pointer text-[12.5px] text-muted-foreground">{t.showOriginal}</summary>
+                        <OriginalText step={step} t={t} />
                       </details>
                     )}
                   </li>
@@ -96,18 +98,18 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
         )}
 
         {verdict.verdict === "violated" && (
-          <Section title="建议怎么处理">
+          <Section title={t.howToFix}>
             <div>{verdict.suggestion}</div>
-            <FixPrompt text={verdict.fixPrompt} />
+            <FixPrompt text={verdict.fixPrompt} t={t} />
           </Section>
         )}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-t bg-card px-[22px] py-3">
-        <span className="font-medium">这条判得对吗</span>
+        <span className="font-medium">{t.isThisRight}</span>
         {(
           [
-            ["right", "判对了"],
-            ["wrong", "判错了"],
+            ["right", t.right],
+            ["wrong", t.wrong],
           ] as const
         ).map(([value, label]) => (
           <Button
@@ -122,14 +124,14 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
         ))}
         {marked !== undefined && (
           <span className={cn("text-[12.5px]", marked === "right" ? "text-followed" : "text-violated")}>
-            已记录：{marked === "right" ? "判对了" : "判错了"}
+            {t.recorded(marked === "right" ? t.right : t.wrong)}
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
           <ExportReviewButton model={model} feedback={feedback} />
           {onNext && (
             <Button size="sm" variant={marked === undefined ? "outline" : "default"} className={SMALL_BUTTON} onClick={onNext}>
-              下一条 →
+              {t.next}
             </Button>
           )}
         </div>
@@ -138,14 +140,14 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
   );
 }
 
-function FixPrompt({ text }: { text: string }) {
+function FixPrompt({ text, t }: { text: string; t: Strings }) {
   const box = useRef<HTMLDivElement>(null);
   return (
     <>
       <div ref={box} className="mt-2 rounded-lg border border-orange-200 bg-violated-soft px-3 py-2.5 whitespace-pre-wrap">
         {text}
       </div>
-      <CopyButton text={text} fallbackTarget={box} />
+      <CopyButton text={text} fallbackTarget={box} t={t} />
     </>
   );
 }
@@ -177,7 +179,7 @@ function selectContents(target: HTMLElement) {
   selection?.addRange(range);
 }
 
-function CopyButton({ text, fallbackTarget }: { text: string; fallbackTarget: RefObject<HTMLDivElement | null> }) {
+function CopyButton({ text, fallbackTarget, t }: { text: string; fallbackTarget: RefObject<HTMLDivElement | null>; t: Strings }) {
   const [status, setStatus] = useState<"idle" | "copied" | "selected">("idle");
   const copy = async () => {
     if (await writeClipboard(text)) {
@@ -189,7 +191,7 @@ function CopyButton({ text, fallbackTarget }: { text: string; fallbackTarget: Re
   };
   return (
     <Button size="sm" className={cn(SMALL_BUTTON, "mt-2")} onClick={copy}>
-      {status === "idle" ? "复制给 agent" : status === "copied" ? "已复制" : "已选中，按 ⌘C 复制"}
+      {status === "idle" ? t.copy : status === "copied" ? t.copied : t.selected}
     </Button>
   );
 }
@@ -202,7 +204,7 @@ function ExportReviewButton({ model, feedback }: { model: ReportModel; feedback:
   };
   return (
     <Button variant="outline" size="sm" className={cn(SMALL_BUTTON, "bg-card hover:bg-muted")} onClick={exportReview}>
-      导出复核结果（{Object.keys(feedback).length}/{verdicts.verdicts.length}）
+      {model.t.exportReview(Object.keys(feedback).length, verdicts.verdicts.length)}
     </Button>
   );
 }

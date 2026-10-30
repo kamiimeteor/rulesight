@@ -1,0 +1,163 @@
+// Run with `npm test` after `npm run build:plugin`: the CLI tests drive the shipped bundle, not the sources.
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { readClaudeCodeSession } from "../src/adapters/claude-code.ts";
+import { buildJudgePrompt } from "../src/judge.ts";
+import { detectLang, parseLang } from "../src/lang.ts";
+import { parseRules } from "../src/rules.ts";
+import { mergeSegmentVerdicts, parseVerdictsFile, verdictOutputSchema, type SegmentRecord } from "../src/verdict.ts";
+
+const run = promisify(execFile);
+const here = (relative: string) => fileURLToPath(new URL(relative, import.meta.url));
+const FIXTURE = here("./fixtures/todo-app");
+const BUNDLE = here("../plugin/bin/rulesight.mjs");
+const SESSION_ID = "3f9c2a71-5b4e-4d1a-9e2f-7c8b6a0d1e42";
+
+test("parseLang reads plain codes and locales", () => {
+  assert.equal(parseLang("en"), "en");
+  assert.equal(parseLang("zh_CN.UTF-8"), "zh");
+  assert.equal(parseLang("zh-Hans-CN"), "zh");
+  assert.equal(parseLang("en_GB.UTF-8"), "en");
+  assert.equal(parseLang("EN-us"), "en");
+  assert.equal(parseLang("fr_FR.UTF-8"), undefined);
+  assert.equal(parseLang("C"), undefined);
+  assert.equal(parseLang(""), undefined);
+  assert.equal(parseLang(undefined), undefined);
+});
+
+test("detectLang: RULESIGHT_LANG, then LC_ALL, LC_MESSAGES, LANG, then Intl, then English", () => {
+  const detect = (env: Record<string, string>, intlLocale?: string) => detectLang({ env, intlLocale });
+  assert.equal(detect({ RULESIGHT_LANG: "en", LC_ALL: "zh_CN.UTF-8", LANG: "zh_CN.UTF-8" }), "en");
+  assert.equal(detect({ RULESIGHT_LANG: "zh", LANG: "en_US.UTF-8" }), "zh");
+  assert.equal(detect({ LC_ALL: "zh_CN.UTF-8", LANG: "en_US.UTF-8" }), "zh");
+  assert.equal(detect({ LC_MESSAGES: "zh_TW.UTF-8", LANG: "en_US.UTF-8" }), "zh");
+  assert.equal(detect({ LANG: "zh_CN.UTF-8" }, "en-US"), "zh");
+  assert.equal(detect({ LANG: "en_GB.UTF-8" }, "zh-CN"), "en");
+  // Unsupported or neutral values fall through instead of forcing English.
+  assert.equal(detect({ RULESIGHT_LANG: "fr", LC_ALL: "C", LANG: "zh_CN.UTF-8" }), "zh");
+  assert.equal(detect({}, "zh-CN"), "zh");
+  assert.equal(detect({}, "de-DE"), "en");
+  assert.equal(detect({}, undefined), "en");
+});
+
+async function fixtureSession(lang: "en" | "zh") {
+  const projects = await mkdtemp(path.join(os.tmpdir(), "rulesight-test-"));
+  await mkdir(path.join(projects, "-home-dev-todo-app"));
+  await copyFile(path.join(FIXTURE, "session.jsonl"), path.join(projects, "-home-dev-todo-app", `${SESSION_ID}.jsonl`));
+  const { session } = await readClaudeCodeSession(SESSION_ID, { projectsDir: projects, lang });
+  const rules = parseRules(await readFile(path.join(FIXTURE, "CLAUDE.md"), "utf8"), "~/todo-app/CLAUDE.md");
+  return { session, rules };
+}
+
+test("Chinese judge prompt and schema are byte-for-byte what 7a207fa sent", async () => {
+  const expected = JSON.parse(await readFile(path.join(FIXTURE, "expected-zh-prompt.json"), "utf8"));
+  const { session, rules } = await fixtureSession("zh");
+  const prompt = buildJudgePrompt(session, rules, undefined, "zh");
+  assert.equal(prompt.system, expected.system);
+  assert.equal(prompt.user, expected.user);
+  assert.deepEqual(verdictOutputSchema("zh"), expected.schema);
+});
+
+test("English: step summaries, judge prompt and schema ask for English", async () => {
+  const { session, rules } = await fixtureSession("en");
+  const summaries = session.steps.map((step) => step.summary);
+  assert.ok(summaries.includes("Ran command pnpm test"));
+  assert.ok(summaries.includes("Read file src/types.ts"));
+  assert.ok(summaries.some((s) => s.startsWith("User: Add an optional due date")));
+  assert.ok(summaries.every((s) => !/[\u4e00-\u9fff]/.test(s)), "no Chinese left in English summaries");
+  const prompt = buildJudgePrompt(session, rules, undefined, "en");
+  assert.match(prompt.system, /Write all text in English/);
+  assert.match(prompt.user, /^# Rules \(7\)/);
+  assert.match(prompt.user, /Output \(error\): PreToolUse:Bash hook error/);
+  assert.ok(!/[\u4e00-\u9fff]/.test(prompt.system + prompt.user), "no Chinese in the English prompt");
+  assert.match(JSON.stringify(verdictOutputSchema("en")), /in English/);
+});
+
+test("merged titles and verdict files carry the language", () => {
+  const rules = [{ id: "R1", text: "x", section: "", source: { file: "CLAUDE.md", line: 1 } }];
+  const steps = ["1", "2"].map((n) => ({ n, kind: "user_message" as const, agent: "main", summary: "", text: "", tool: null, parentStep: null, at: null, raw: [] }));
+  const violated = (index: number, n: string): SegmentRecord => ({
+    index, firstStep: n, lastStep: n, status: "ok", costUsd: 0, turns: 1, durationMs: 1, rejected: [],
+    verdicts: [{ ruleId: "R1", verdict: "violated", title: "Did it", reason: "r", keyStep: n, evidenceSteps: [n], suggestion: "s", fixPrompt: "f" }],
+  });
+  const segments = [violated(1, "1"), violated(2, "2")];
+  assert.equal(mergeSegmentVerdicts(rules, segments, steps, "en").verdicts[0]?.title, "Did it (1 more)");
+  assert.equal(mergeSegmentVerdicts(rules, segments, steps).verdicts[0]?.title, "Did it（另有 1 处）");
+
+  const file = { sessionId: "s", model: "m", judgedAt: "t", rulesFile: "CLAUDE.md", rules, verdicts: [], rejected: [], missingRuleIds: ["R1"], segments: [], costUsd: 0, turns: 0, durationMs: 0 };
+  assert.equal(parseVerdictsFile({ ...file, lang: "en" }, steps).lang, "en");
+  assert.equal(parseVerdictsFile(file, steps).lang, undefined);
+  assert.throws(() => parseVerdictsFile({ ...file, lang: "fr" }, steps));
+});
+
+// Drives the bundle end to end with a stub in place of `claude -p` that returns fixture verdicts.
+async function runCli(env: Record<string, string>, verdictsFixture: string, extraArgs: string[] = []) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "rulesight-cli-"));
+  const home = path.join(dir, "home");
+  const projects = path.join(dir, "projects", "-home-dev-todo-app");
+  await mkdir(path.join(home, "todo-app"), { recursive: true });
+  await mkdir(projects, { recursive: true });
+  await copyFile(path.join(FIXTURE, "CLAUDE.md"), path.join(home, "todo-app", "CLAUDE.md"));
+  await copyFile(path.join(FIXTURE, "session.jsonl"), path.join(projects, `${SESSION_ID}.jsonl`));
+  const stub = path.join(dir, "stub-claude.mjs");
+  await writeFile(
+    stub,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(path.join(dir, "args.json"))}, JSON.stringify(args));
+fs.readFileSync(0);
+process.stdout.write(JSON.stringify({ is_error: false, result: "", structured_output: JSON.parse(fs.readFileSync(${JSON.stringify(path.join(FIXTURE, verdictsFixture))}, "utf8")), total_cost_usd: 0, num_turns: 1, duration_ms: 1 }));
+`,
+  );
+  await chmod(stub, 0o755);
+  const clean = { PATH: process.env.PATH ?? "", HOME: home, RULESIGHT_CLAUDE_BIN: stub };
+  const { stdout } = await run(
+    process.execPath,
+    [BUNDLE, "run", "--session", SESSION_ID, "--projects-dir", path.dirname(projects), "--cwd", path.join(home, "todo-app"), "--out-dir", path.join(dir, "out"), ...extraArgs],
+    { env: { ...clean, ...env } },
+  );
+  const html = await readFile(path.join(dir, "out", `${SESSION_ID}.report.html`), "utf8");
+  const verdicts = JSON.parse(await readFile(path.join(dir, "out", `${SESSION_ID}.verdicts.json`), "utf8"));
+  const args: string[] = JSON.parse(await readFile(path.join(dir, "args.json"), "utf8"));
+  return { stdout: stdout.replaceAll(dir, "<dir>"), html, verdicts, args };
+}
+
+test("CLI in a Chinese locale prints exactly what 7a207fa printed", async () => {
+  const { stdout, verdicts } = await runCli({ LANG: "zh_CN.UTF-8" }, "verdicts.zh.json");
+  const expected = (await readFile(path.join(FIXTURE, "expected-zh-stdout.txt"), "utf8"));
+  assert.equal(stdout, expected);
+  assert.equal(verdicts.lang, "zh");
+});
+
+test("RULESIGHT_LANG=en: English CLI output, English judge prompt, report data marked en", async () => {
+  const { stdout, html, verdicts, args } = await runCli({ RULESIGHT_LANG: "en", LANG: "zh_CN.UTF-8" }, "verdicts.en.json");
+  assert.match(stdout, /^Session 3f9c2a71-5b4e-4d1a-9e2f-7c8b6a0d1e42: 17 steps$/m);
+  assert.match(stdout, /^Judging in 1 segment, estimated cost about \$0\.0\d, about 1 min/m);
+  assert.match(stdout, /^RULESIGHT_PLAN \{"segments":1,"needsConfirm":false\}$/m);
+  assert.match(stdout, /^Judged 7 rules: violated 1, followed 4, not applicable 2$/m);
+  assert.match(stdout, /^RULESIGHT_REPORT .+\.report\.html$/m);
+  assert.ok(!/[\u4e00-\u9fff]/.test(stdout), "no Chinese in English CLI output");
+  assert.equal(verdicts.lang, "en");
+  const system = args[args.indexOf("--system-prompt") + 1] ?? "";
+  assert.match(system, /Write all text in English/);
+  const data = JSON.parse(/<script type="application\/json" id="rulesight-data">([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "null");
+  assert.equal(data.verdicts.lang, "en");
+  assert.ok(html.includes("Key evidence") && html.includes("What happened"), "template carries the English UI strings");
+});
+
+test("--lang beats RULESIGHT_LANG; a bad --lang is a usage error", async () => {
+  const { verdicts } = await runCli({ RULESIGHT_LANG: "zh" }, "verdicts.en.json", ["--lang", "en"]);
+  assert.equal(verdicts.lang, "en");
+  await assert.rejects(run(process.execPath, [BUNDLE, "plan", "--session", SESSION_ID, "--lang", "fr"], { env: { PATH: process.env.PATH ?? "", RULESIGHT_LANG: "en" } }), (error: { code?: number; stderr?: string }) => {
+    assert.equal(error.code, 2);
+    assert.match(error.stderr ?? "", /--lang must be en or zh: fr/);
+    return true;
+  });
+});

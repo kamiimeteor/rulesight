@@ -1,3 +1,4 @@
+import { parseLang, type Lang } from "./lang.ts";
 import type { Rule } from "./rules.ts";
 import { isRecord, type Step } from "./steps.ts";
 
@@ -67,6 +68,8 @@ export interface VerdictsFile {
   model: string;
   judgedAt: string;
   rulesFile: string;
+  // Language the verdict text was written in; the report renders in it. Missing in files from before 2026-10-30, which are Chinese.
+  lang?: Lang;
   rules: Rule[];
   verdicts: Verdict[];
   rejected: Rejection[];
@@ -83,37 +86,61 @@ export interface ValidationResult {
   missingRuleIds: string[];
 }
 
+// What each field asks the model for, per output language.
+const FIELD_DESCRIPTIONS = {
+  zh: {
+    ruleId: "规则编号，原样照抄，例如 R7",
+    reason: "先写这一项：中文，一段话说明会话里发生了什么、对照规则是否符合，指出关键步骤里的具体事实。verdict 必须和这里的结论一致",
+    keyStep: "最关键的那一步的步骤号，只有 followed 和 violated 填，否则填空字符串",
+    evidenceSteps: "证据步骤号，必须包含 keyStep；not_applicable 填空数组",
+    title: "中文，写这次会话里发生了什么，不要复述规则，不要写步骤号",
+    suggestion: "只有 violated 填：一句中文建议；否则填空字符串",
+    fixPrompt: "只有 violated 填：用户可以直接复制给 agent 的中文指令；否则填空字符串",
+  },
+  en: {
+    ruleId: "The rule id, copied exactly, e.g. R7",
+    reason:
+      "Write this first: in English, one paragraph on what happened in the session and whether it complies with the rule, citing concrete facts from the key steps. verdict must match the conclusion here",
+    keyStep: "Step number of the single most telling step; only for followed and violated, otherwise an empty string",
+    evidenceSteps: "Evidence step numbers, must include keyStep; an empty array for not_applicable",
+    title: "In English, what happened in this session; do not restate the rule, do not include step numbers",
+    suggestion: "Only for violated: one-sentence suggestion in English; otherwise an empty string",
+    fixPrompt: "Only for violated: an instruction in English the user can paste straight to the agent; otherwise an empty string",
+  },
+} as const satisfies Record<Lang, Record<string, string>>;
+
 // Flat on purpose: the model fills every field, and parseVerdict turns it into the union.
 // Empty string / empty array mean "not applicable to this verdict kind".
-export const VERDICT_OUTPUT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["verdicts"],
-  properties: {
-    verdicts: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["ruleId", "reason", "keyStep", "evidenceSteps", "verdict", "title", "suggestion", "fixPrompt"],
-        properties: {
-          ruleId: { type: "string", description: "规则编号，原样照抄，例如 R7" },
-          reason: { type: "string", description: "先写这一项：中文，一段话说明会话里发生了什么、对照规则是否符合，指出关键步骤里的具体事实。verdict 必须和这里的结论一致" },
-          keyStep: { type: "string", description: "最关键的那一步的步骤号，只有 followed 和 violated 填，否则填空字符串" },
-          evidenceSteps: {
-            type: "array",
-            items: { type: "string" },
-            description: "证据步骤号，必须包含 keyStep；not_applicable 填空数组",
+export function verdictOutputSchema(lang: Lang) {
+  const d = FIELD_DESCRIPTIONS[lang];
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["verdicts"],
+    properties: {
+      verdicts: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["ruleId", "reason", "keyStep", "evidenceSteps", "verdict", "title", "suggestion", "fixPrompt"],
+          properties: {
+            ruleId: { type: "string", description: d.ruleId },
+            reason: { type: "string", description: d.reason },
+            keyStep: { type: "string", description: d.keyStep },
+            evidenceSteps: { type: "array", items: { type: "string" }, description: d.evidenceSteps },
+            verdict: { type: "string", enum: [...VERDICT_KINDS] },
+            title: { type: "string", description: d.title },
+            suggestion: { type: "string", description: d.suggestion },
+            fixPrompt: { type: "string", description: d.fixPrompt },
           },
-          verdict: { type: "string", enum: [...VERDICT_KINDS] },
-          title: { type: "string", description: "中文，写这次会话里发生了什么，不要复述规则，不要写步骤号" },
-          suggestion: { type: "string", description: "只有 violated 填：一句中文建议；否则填空字符串" },
-          fixPrompt: { type: "string", description: "只有 violated 填：用户可以直接复制给 agent 的中文指令；否则填空字符串" },
         },
       },
     },
-  },
-} as const satisfies Record<string, unknown>;
+  } as const satisfies Record<string, unknown>;
+}
+
+export const VERDICT_OUTPUT_SCHEMA = verdictOutputSchema("zh");
 
 type Parsed = { ok: true; verdict: Verdict } | { ok: false; reason: string };
 
@@ -210,6 +237,7 @@ export function mergeSegmentVerdicts(
   rules: readonly Rule[],
   segments: readonly SegmentRecord[],
   steps: readonly Step[],
+  lang: Lang = "zh",
 ): { verdicts: Verdict[]; missingRuleIds: string[] } {
   const order = new Map(steps.map((step, i) => [step.n, i]));
   const okSegments = segments.filter((segment) => segment.status === "ok").sort((a, b) => a.index - b.index);
@@ -231,7 +259,7 @@ export function mergeSegmentVerdicts(
       const others = violations.length - 1;
       verdicts.push({
         ...firstViolation,
-        title: others > 0 ? `${firstViolation.title}（另有 ${others} 处）` : firstViolation.title,
+        title: others > 0 ? `${firstViolation.title}${lang === "en" ? ` (${others} more)` : `（另有 ${others} 处）`}` : firstViolation.title,
         evidenceSteps: mergeEvidence(violations, firstViolation.keyStep, order),
       });
     } else if (firstFollowed !== undefined) {
@@ -298,12 +326,13 @@ function parseSegmentRecord(raw: unknown, rules: readonly Rule[], steps: readonl
 // Verdicts are re-validated against the steps, so a report never shows a citation to a missing step.
 export function parseVerdictsFile(raw: unknown, steps: readonly Step[]): VerdictsFile {
   if (!isRecord(raw)) throw new Error("判定文件不是 JSON 对象");
-  const { sessionId, model, judgedAt, rulesFile, rules, verdicts, rejected, missingRuleIds, segments, costUsd, turns, durationMs } = raw;
+  const { sessionId, model, judgedAt, rulesFile, lang, rules, verdicts, rejected, missingRuleIds, segments, costUsd, turns, durationMs } = raw;
   if (
     typeof sessionId !== "string" ||
     typeof model !== "string" ||
     typeof judgedAt !== "string" ||
     typeof rulesFile !== "string" ||
+    !(lang === undefined || (typeof lang === "string" && parseLang(lang) === lang)) ||
     !Array.isArray(rules) ||
     !Array.isArray(rejected) ||
     !Array.isArray(segments) ||
@@ -327,6 +356,7 @@ export function parseVerdictsFile(raw: unknown, steps: readonly Step[]): Verdict
     model,
     judgedAt,
     rulesFile,
+    ...(lang === undefined ? {} : { lang: parseLang(lang) }),
     rules: parsedRules,
     verdicts: checked.verdicts,
     rejected: rejected.map(parseRejection),

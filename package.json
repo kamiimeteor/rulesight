@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit && tsc -p report/tsconfig.json --noEmit",
     "build:report": "vite build --config report/vite.config.ts",
     "report": "node scripts/report.ts",
-    "build:plugin": "npm run build:report && node scripts/build-plugin.ts"
+    "build:plugin": "npm run build:report && node scripts/build-plugin.ts",
+    "test": "node --test \"test/*.test.ts\""
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

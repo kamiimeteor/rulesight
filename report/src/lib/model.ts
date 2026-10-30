@@ -1,10 +1,14 @@
+import type { Lang } from "../../../src/lang.ts";
 import type { ReportData } from "../../../src/report.ts";
+import { STRINGS, type Strings } from "./i18n.ts";
 import type { Rule } from "../../../src/rules.ts";
 import type { Step } from "../../../src/steps.ts";
 import { VERDICT_KINDS, type Verdict, type VerdictKind, type ViolatedVerdict } from "../../../src/verdict.ts";
 
 export interface ReportModel {
   data: ReportData;
+  lang: Lang;
+  t: Strings;
   rules: ReadonlyMap<string, Rule>;
   steps: ReadonlyMap<string, Step>;
   stepOrder: readonly string[];
@@ -53,8 +57,12 @@ export function buildModel(data: ReportData): ReportModel {
     violationsAtStep.set(verdict.keyStep, list);
   }
 
+  // Verdicts files from before 2026-10-30 carry no language; they were all written in Chinese.
+  const lang = file.lang ?? "zh";
   return {
     data,
+    lang,
+    t: STRINGS[lang],
     rules: new Map(file.rules.map((rule) => [rule.id, rule])),
     steps: new Map(session.steps.map((step) => [step.n, step])),
     stepOrder,

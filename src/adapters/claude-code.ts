@@ -3,7 +3,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
-import type { Session, Step, TextStep, ToolCallStep } from "../steps.ts";
+import type { Lang } from "../lang.ts";
+import { COMPACTION_LABELS, type Session, type Step, type TextStep, type ToolCallStep } from "../steps.ts";
 
 // Boundary: everything below `parseEntryLine` works on these typed shapes only.
 
@@ -188,40 +189,93 @@ function str(value: unknown): string | undefined {
 
 type Summarizer = (input: Record<string, unknown>, cwd: string | null) => string | undefined;
 
+// Step summaries are written in the output language; the step text, tool input and output stay as recorded.
+const LABELS = {
+  zh: {
+    bash: "运行命令",
+    read: "读取文件",
+    edit: "修改文件",
+    write: "写入文件",
+    search: "搜索",
+    agent: "启动子 agent：",
+    webFetch: "抓取网页",
+    webSearch: "搜索网页",
+    todo: "更新待办列表",
+    tool: "调用工具",
+    user: "用户消息：",
+    agentMessage: "Agent 回复：",
+    thinking: "Agent 思考：",
+    subagentReport: "子 agent 交回结果：",
+    taskNotification: "后台任务通知",
+    systemEvent: "系统事件：",
+    untitled: "未命名会话",
+  },
+  en: {
+    bash: "Ran command",
+    read: "Read file",
+    edit: "Edited file",
+    write: "Wrote file",
+    search: "Searched",
+    agent: "Started sub-agent: ",
+    webFetch: "Fetched page",
+    webSearch: "Searched the web",
+    todo: "Updated to-do list",
+    tool: "Called tool",
+    user: "User: ",
+    agentMessage: "Agent: ",
+    thinking: "Agent thinking: ",
+    subagentReport: "Sub-agent reported back: ",
+    taskNotification: "Background task notification",
+    systemEvent: "System event: ",
+    untitled: "Untitled session",
+  },
+} as const satisfies Record<Lang, Record<string, string>>;
+
+
+// A label ending in a colon or space runs straight into the value; anything else gets one space.
+function join(label: string, value: string): string {
+  return /[：\s]$/.test(label) ? `${label}${value}` : `${label} ${value}`;
+}
+
 const withPath =
   (label: string): Summarizer =>
   (input, cwd) => {
     const filePath = str(input.file_path);
-    return filePath === undefined ? undefined : `${label} ${displayPath(filePath, cwd)}`;
+    return filePath === undefined ? undefined : join(label, displayPath(filePath, cwd));
   };
 
 const withField =
   (label: string, field: string, max: number): Summarizer =>
   (input) => {
     const value = str(input[field]);
-    return value === undefined ? undefined : `${label}${label.endsWith("：") ? "" : " "}${clip(value, max)}`;
+    return value === undefined ? undefined : join(label, clip(value, max));
   };
 
-const SUMMARIZERS = new Map<string, Summarizer>([
-  ["Bash", (input) => {
-    const command = str(input.command);
-    return command === undefined ? undefined : `运行命令 ${clip(command.split("\n")[0] ?? "", 60)}`;
-  }],
-  ["Read", withPath("读取文件")],
-  ["Edit", withPath("修改文件")],
-  ["MultiEdit", withPath("修改文件")],
-  ["Write", withPath("写入文件")],
-  ["Grep", withField("搜索", "pattern", 60)],
-  ["Glob", withField("搜索", "pattern", 60)],
-  ["Agent", withField("启动子 agent：", "description", 60)],
-  ["Task", withField("启动子 agent：", "description", 60)],
-  ["WebFetch", withField("抓取网页", "url", 80)],
-  ["WebSearch", withField("搜索网页", "query", 60)],
-  ["TodoWrite", () => "更新待办列表"],
-]);
+function summarizers(lang: Lang): Map<string, Summarizer> {
+  const t = LABELS[lang];
+  return new Map<string, Summarizer>([
+    ["Bash", (input) => {
+      const command = str(input.command);
+      return command === undefined ? undefined : join(t.bash, clip(command.split("\n")[0] ?? "", 60));
+    }],
+    ["Read", withPath(t.read)],
+    ["Edit", withPath(t.edit)],
+    ["MultiEdit", withPath(t.edit)],
+    ["Write", withPath(t.write)],
+    ["Grep", withField(t.search, "pattern", 60)],
+    ["Glob", withField(t.search, "pattern", 60)],
+    ["Agent", withField(t.agent, "description", 60)],
+    ["Task", withField(t.agent, "description", 60)],
+    ["WebFetch", withField(t.webFetch, "url", 80)],
+    ["WebSearch", withField(t.webSearch, "query", 60)],
+    ["TodoWrite", () => t.todo],
+  ]);
+}
 
-function summarizeTool(name: string, input: Record<string, unknown>, cwd: string | null): string {
-  return SUMMARIZERS.get(name)?.(input, cwd) ?? `调用工具 ${name}`;
+const SUMMARIZERS: Record<Lang, Map<string, Summarizer>> = { zh: summarizers("zh"), en: summarizers("en") };
+
+function summarizeTool(name: string, input: Record<string, unknown>, cwd: string | null, lang: Lang): string {
+  return SUMMARIZERS[lang].get(name)?.(input, cwd) ?? join(LABELS[lang].tool, name);
 }
 
 // Conversion.
@@ -254,6 +308,7 @@ interface Context {
   stats: AdaptStats;
   seenUuids: Set<string>;
   callsByToolUseId: Map<string, ToolCallStep>;
+  lang: Lang;
 }
 
 interface ToolResult {
@@ -316,6 +371,7 @@ function convertConversation(ctx: Context, file: ParsedFile, agent: string, pare
     }
   }
 
+  const t = LABELS[ctx.lang];
   const pushText = (kind: TextStep["kind"], text: string, summary: string, entry: RawEntry) => {
     steps.push({ n: nextN(), kind, agent, summary, text, tool: null, parentStep, at: entry.timestamp, raw: [entry.uuid] });
   };
@@ -323,23 +379,23 @@ function convertConversation(ctx: Context, file: ParsedFile, agent: string, pare
   const userTextStep = (entry: RawEntry, text: string) => {
     const { origin } = entry;
     if (entry.isCompactSummary) {
-      pushText("system", text, "上下文压缩摘要", entry);
+      pushText("system", text, COMPACTION_LABELS[ctx.lang].summary, entry);
     } else if (isCliNoise(text)) {
       const typed = typedCommand(text);
       if (typed === null) {
         ctx.stats.skippedCliNoise += 1;
       } else {
         ctx.stats.slashCommandsWithArgs += 1;
-        pushText("user_message", typed, `用户消息：${clip(typed, 40)}`, entry);
+        pushText("user_message", typed, join(t.user, clip(typed, 40)), entry);
       }
     } else if (origin === null || origin.kind === "human") {
-      pushText("user_message", text, `用户消息：${clip(text, 40)}`, entry);
+      pushText("user_message", text, join(t.user, clip(text, 40)), entry);
     } else if (origin.kind === "peer") {
-      pushText("system", text, `子 agent 交回结果：${origin.name}`, entry);
+      pushText("system", text, join(t.subagentReport, origin.name), entry);
     } else if (origin.kind === "task-notification") {
-      pushText("system", text, "后台任务通知", entry);
+      pushText("system", text, t.taskNotification, entry);
     } else {
-      pushText("system", text, `系统事件：${origin.label}`, entry);
+      pushText("system", text, join(t.systemEvent, origin.label), entry);
     }
   };
 
@@ -348,7 +404,7 @@ function convertConversation(ctx: Context, file: ParsedFile, agent: string, pare
     if (entry.type === "system") {
       if (entry.subtype === "compact_boundary") {
         ctx.stats.compactions += 1;
-        pushText("system", entry.systemText ?? "上下文压缩", "上下文压缩", entry);
+        pushText("system", entry.systemText ?? COMPACTION_LABELS[ctx.lang].compaction, COMPACTION_LABELS[ctx.lang].compaction, entry);
       } else {
         ctx.stats.skippedSystemEntries += 1;
       }
@@ -368,9 +424,9 @@ function convertConversation(ctx: Context, file: ParsedFile, agent: string, pare
           if (text.trim() === "") {
             ctx.stats.skippedEmptyBlocks += 1;
           } else if (block.type === "thinking") {
-            pushText("thinking", text, `Agent 思考：${clip(text, 40)}`, entry);
+            pushText("thinking", text, join(t.thinking, clip(text, 40)), entry);
           } else if (entry.type === "assistant") {
-            pushText("agent_message", text, `Agent 回复：${clip(text, 40)}`, entry);
+            pushText("agent_message", text, join(t.agentMessage, clip(text, 40)), entry);
           } else {
             userTextStep(entry, text);
           }
@@ -382,7 +438,7 @@ function convertConversation(ctx: Context, file: ParsedFile, agent: string, pare
             n: nextN(),
             kind: "tool_call",
             agent,
-            summary: summarizeTool(block.name, block.input, ctx.cwd),
+            summary: summarizeTool(block.name, block.input, ctx.cwd, ctx.lang),
             text: null,
             tool: { name: block.name, input: block.input, output: null, isError: false },
             parentStep,
@@ -422,9 +478,11 @@ export interface AdaptInput {
   sessionId: string;
   main: ParsedFile;
   subagents: SubagentFile[];
+  // Language of the generated step summaries; defaults to Chinese so existing scripts and step files are unchanged.
+  lang?: Lang;
 }
 
-export function toSessionWithStats({ sessionId, main, subagents }: AdaptInput): AdaptResult {
+export function toSessionWithStats({ sessionId, main, subagents, lang = "zh" }: AdaptInput): AdaptResult {
   const stats: AdaptStats = {
     entriesRead: 0,
     duplicateEntries: 0,
@@ -444,7 +502,7 @@ export function toSessionWithStats({ sessionId, main, subagents }: AdaptInput): 
   };
   const orderedMain = orderByTime(main.entries);
   const cwd = orderedMain.find((entry) => entry.cwd !== null)?.cwd ?? null;
-  const ctx: Context = { cwd, stats, seenUuids: new Set(), callsByToolUseId: new Map() };
+  const ctx: Context = { cwd, stats, seenUuids: new Set(), callsByToolUseId: new Map(), lang };
 
   const mainSteps = convertConversation(ctx, main, "main", null);
 
@@ -478,7 +536,7 @@ export function toSessionWithStats({ sessionId, main, subagents }: AdaptInput): 
     .filter((ms) => !Number.isNaN(ms));
   if (times.length === 0) throw new Error(`会话 ${sessionId} 里没有带时间的消息`);
   const firstUserStep = mainSteps.find((step) => step.kind === "user_message");
-  const title = main.customTitle ?? (firstUserStep?.text ? clip(firstUserStep.text, 40) : "未命名会话");
+  const title = main.customTitle ?? (firstUserStep?.text ? clip(firstUserStep.text, 40) : LABELS[lang].untitled);
 
   return {
     session: {
@@ -559,9 +617,9 @@ async function readSubagents(sessionDir: string): Promise<SubagentFile[]> {
 
 export async function readClaudeCodeSession(
   sessionId: string,
-  options: { projectsDir?: string } = {},
+  options: { projectsDir?: string; lang?: Lang } = {},
 ): Promise<AdaptResult> {
   const { file, sessionDir } = await findSessionFile(path.resolve(options.projectsDir ?? DEFAULT_PROJECTS_DIR), sessionId);
   const main = await readParsedFile(file);
-  return toSessionWithStats({ sessionId, main, subagents: await readSubagents(sessionDir) });
+  return toSessionWithStats({ sessionId, main, subagents: await readSubagents(sessionDir), lang: options.lang });
 }

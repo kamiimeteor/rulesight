@@ -1,10 +1,11 @@
 import { clip, formatStep, STEP_SEPARATOR } from "./judge.ts";
-import type { Session, Step } from "./steps.ts";
+import type { Lang } from "./lang.ts";
+import { COMPACTION_LABELS, type Session, type Step } from "./steps.ts";
 
 export const DEFAULT_MAX_SEGMENT_CHARS = 200_000;
 
-const COMPACTION_SUMMARY = "上下文压缩摘要";
-const COMPACTION = "上下文压缩";
+const COMPACTIONS: ReadonlySet<string> = new Set(Object.values(COMPACTION_LABELS).map((labels) => labels.compaction));
+const COMPACTION_SUMMARIES: ReadonlySet<string> = new Set(Object.values(COMPACTION_LABELS).map((labels) => labels.summary));
 const RECENT_USER_MESSAGES = 5;
 const RECENT_USER_MESSAGE_CHARS = 500;
 
@@ -42,7 +43,7 @@ interface Unit {
 
 function cutKindOf(step: Step): CutKind {
   if (step.parentStep !== null) return "sub";
-  if (step.kind === "system" && step.summary === COMPACTION) return "compaction";
+  if (step.kind === "system" && COMPACTIONS.has(step.summary)) return "compaction";
   return step.kind === "user_message" ? "user" : "main";
 }
 
@@ -51,10 +52,10 @@ function renderedChars(lengths: readonly number[]): number {
 }
 
 // A main step and its sub-steps are one unit when they fit in a segment; a block that cannot fit is split at every step.
-function toUnits(steps: readonly Step[], maxChars: number): Unit[] {
+function toUnits(steps: readonly Step[], maxChars: number, lang: Lang): Unit[] {
   const blocks: { steps: Step[]; lengths: number[] }[] = [];
   for (const step of steps) {
-    const length = formatStep(step).length;
+    const length = formatStep(step, lang).length;
     const block = step.parentStep === null ? undefined : blocks.at(-1);
     if (block === undefined) blocks.push({ steps: [step], lengths: [length] });
     else {
@@ -106,18 +107,19 @@ function splitUnits(units: readonly Unit[], maxChars: number): Unit[][] {
 
 export function planSegments(
   session: Pick<Session, "steps">,
-  options: { maxChars?: number; before?: readonly Step[] } = {},
+  options: { maxChars?: number; before?: readonly Step[]; lang?: Lang } = {},
 ): Segment[] {
   const maxChars = options.maxChars ?? DEFAULT_MAX_SEGMENT_CHARS;
+  const lang = options.lang ?? "zh";
   if (!Number.isInteger(maxChars) || maxChars <= 0) throw new Error(`maxChars 必须是正整数：${maxChars}`);
-  const groups = splitUnits(toUnits(session.steps, maxChars), maxChars).map((group) => group.flatMap((unit) => unit.steps));
+  const groups = splitUnits(toUnits(session.steps, maxChars, lang), maxChars).map((group) => group.flatMap((unit) => unit.steps));
 
   let summary: string | null = null;
   let recent: string[] = [];
   const remember = (steps: readonly Step[]) => {
     for (const step of steps) {
       if (step.parentStep !== null) continue;
-      if (step.kind === "system" && step.summary === COMPACTION_SUMMARY) summary = step.text;
+      if (step.kind === "system" && COMPACTION_SUMMARIES.has(step.summary)) summary = step.text;
       else if (step.kind === "user_message") recent = [...recent, step.text].slice(-RECENT_USER_MESSAGES);
     }
   };
@@ -132,7 +134,7 @@ export function planSegments(
       steps,
       context: {
         summary,
-        recentUserMessages: recent.map((text) => clip(text, RECENT_USER_MESSAGE_CHARS)),
+        recentUserMessages: recent.map((text) => clip(text, RECENT_USER_MESSAGE_CHARS, lang)),
         position: { index: i + 1, total: groups.length, firstStep: first.n, lastStep: last.n },
       },
     };

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { buildJudgePrompt, runSegments } from "./judge.ts";
+import type { Lang } from "./lang.ts";
 import { parseRules, type Rule } from "./rules.ts";
 import { DEFAULT_MAX_SEGMENT_CHARS, planSegments, sliceByTime, type Segment } from "./segment.ts";
 import type { Session } from "./steps.ts";
@@ -89,6 +90,8 @@ export interface Plan {
   totalChars: number;
   estimatedCostUsd: number;
   estimatedMinutes: number;
+  // Language of the judge prompt and of the verdict text it asks for.
+  lang: Lang;
 }
 
 export function buildPlan(input: {
@@ -97,8 +100,9 @@ export function buildPlan(input: {
   fromMs?: number | undefined;
   toMs?: number | undefined;
   maxChars?: number | undefined;
+  lang?: Lang | undefined;
 }): Plan {
-  const { fullSession, rules, fromMs, toMs, maxChars = DEFAULT_MAX_SEGMENT_CHARS } = input;
+  const { fullSession, rules, fromMs, toMs, maxChars = DEFAULT_MAX_SEGMENT_CHARS, lang = "zh" } = input;
   const ranged = fromMs !== undefined || toMs !== undefined;
   const session = ranged ? sliceByTime(fullSession, { fromMs, toMs }) : fullSession;
   if (session.steps.length === 0) {
@@ -107,9 +111,9 @@ export function buildPlan(input: {
   const firstInRange = session.steps[0]?.n;
   // Steps before the range still feed the first segment's background.
   const before = ranged ? fullSession.steps.slice(0, fullSession.steps.findIndex((step) => step.n === firstInRange)) : [];
-  const segments = planSegments(session, { maxChars, before });
+  const segments = planSegments(session, { maxChars, before, lang });
   const promptChars = segments.map((segment) => {
-    const prompt = buildJudgePrompt(session, rules, segment);
+    const prompt = buildJudgePrompt(session, rules, segment, lang);
     return prompt.system.length + prompt.user.length;
   });
   const totalChars = promptChars.reduce((sum, chars) => sum + chars, 0);
@@ -122,6 +126,7 @@ export function buildPlan(input: {
     totalChars,
     estimatedCostUsd: (totalChars / 1_000_000) * USD_PER_MILLION_CHARS,
     estimatedMinutes: (Math.ceil(segments.length / CONCURRENCY) * SECONDS_PER_SEGMENT) / 60,
+    lang,
   };
 }
 
@@ -133,11 +138,12 @@ export async function judgePlan(input: {
   onSegmentDone?: (record: SegmentRecord) => void;
 }): Promise<VerdictsFile> {
   const { plan, rules, rulesFile, model, onSegmentDone } = input;
-  const { session, fullSession, segments } = plan;
-  const records = await runSegments({ session, rules, segments, model, concurrency: CONCURRENCY, onSegmentDone });
-  const { verdicts, missingRuleIds } = mergeSegmentVerdicts(rules, records, fullSession.steps);
+  const { session, fullSession, segments, lang } = plan;
+  const records = await runSegments({ session, rules, segments, model, lang, concurrency: CONCURRENCY, onSegmentDone });
+  const { verdicts, missingRuleIds } = mergeSegmentVerdicts(rules, records, fullSession.steps, lang);
+  const segmentLabel = (index: number) => (lang === "en" ? `Segment ${index}: ` : `第 ${index} 段：`);
   const rejected: Rejection[] = records.flatMap((record) =>
-    record.rejected.map((rejection) => (records.length > 1 ? { ...rejection, reason: `第 ${record.index} 段：${rejection.reason}` } : rejection)),
+    record.rejected.map((rejection) => (records.length > 1 ? { ...rejection, reason: `${segmentLabel(record.index)}${rejection.reason}` } : rejection)),
   );
   const sum = (pick: (record: SegmentRecord) => number) => records.reduce((total, record) => total + pick(record), 0);
   return {
@@ -145,6 +151,7 @@ export async function judgePlan(input: {
     model,
     judgedAt: new Date().toISOString(),
     rulesFile,
+    lang,
     rules: [...rules],
     verdicts,
     rejected,

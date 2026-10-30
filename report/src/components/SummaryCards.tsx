@@ -4,12 +4,6 @@ import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import type { VerdictKind } from "../../../src/verdict.ts";
 
-const CAPTION = {
-  violated: "处违反，需要你处理",
-  followed: "条遵守，每条都附了证据",
-  not_applicable: "条不适用，这次没碰到相关情况",
-} as const satisfies Record<VerdictKind, string>;
-
 export function SummaryCards({ model, onSelectKind }: { model: ReportModel; onSelectKind: (kind: VerdictKind) => void }) {
   return (
     <div className="mb-3 grid grid-cols-3 gap-3">
@@ -24,7 +18,7 @@ export function SummaryCards({ model, onSelectKind }: { model: ReportModel; onSe
               className="w-full rounded-lg px-4 py-3.5 text-left enabled:cursor-pointer"
             >
               <b className={cn("block text-[28px] leading-tight font-semibold tracking-tight", TONE[kind].text)}>{count}</b>
-              <div className="text-[13px] text-muted-foreground">{CAPTION[kind]}</div>
+              <div className="text-[13px] text-muted-foreground">{model.t.summaryCaption[kind]}</div>
             </button>
           </Card>
         );

@@ -5,13 +5,14 @@ import type { ReportModel } from "@/lib/model";
 
 export function Header({ model, reviewed }: { model: ReportModel; reviewed: number }) {
   const { session, verdicts } = model.data;
-  const started = formatStart(session.startedAt);
-  const duration = formatDuration(session.startedAt, session.endedAt);
+  const { t } = model;
+  const started = formatStart(session.startedAt, t);
+  const duration = formatDuration(session.startedAt, session.endedAt, t);
   const meta = [
-    started && `${started} 开始`,
-    duration && `用时 ${duration}`,
-    `${session.steps.length} 步`,
-    `对照 ${verdicts.rules.length} 条规则（${fileName(verdicts.rulesFile)}）`,
+    started && t.started(started),
+    duration && t.duration(duration),
+    t.stepCount(session.steps.length),
+    t.ruleCount(verdicts.rules.length, fileName(verdicts.rulesFile)),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -28,14 +29,14 @@ export function Header({ model, reviewed }: { model: ReportModel; reviewed: numb
       <div>
         <h1 className="mb-1 text-xl font-semibold tracking-tight">{session.title}</h1>
         <div className="text-muted-foreground">{meta}</div>
-        {failedSegments > 0 && <div className="mt-1 font-medium text-violated">有 {failedSegments} 段没判成，这份报告不完整</div>}
+        {failedSegments > 0 && <div className="mt-1 font-medium text-violated">{t.failedSegments(failedSegments)}</div>}
       </div>
       <div className="flex shrink-0 items-center gap-3">
         <span className={reviewed === total ? "font-medium text-followed" : "text-muted-foreground"}>
-          {reviewed === total ? `已全部复核（${total} 条）` : `已复核 ${reviewed} / ${total}`}
+          {reviewed === total ? t.allReviewed(total) : t.reviewed(reviewed, total)}
         </span>
         <Button variant="outline" size="sm" className="bg-card hover:bg-muted" onClick={exportPage}>
-          导出报告
+          {t.exportReport}
         </Button>
       </div>
     </header>

@@ -75,7 +75,7 @@
 | `n` | 步骤号，字符串，从 "1" 开始。主会话连续编号；子 agent 的步骤见下面的“子 agent” |
 | `kind` | 步骤类型，只有 5 种：`user_message` 用户消息、`agent_message` Agent 回复、`thinking` Agent 思考、`tool_call` 工具调用（含结果）、`system` 系统事件（比如上下文压缩） |
 | `agent` | 谁做的：`main` 是主会话；子 agent 写它的 ID |
-| `summary` | 一句话说明这一步做了什么，用中文，由适配器按规则生成，不调用模型。例：“运行命令 npm test”“修改文件 src/auth.ts”“读取文件 README.md” |
+| `summary` | 一句话说明这一步做了什么，由适配器按规则生成，不调用模型；用输出语言写（2026-10-30 起，中文或英文）。例：“运行命令 npm test”“修改文件 src/auth.ts”；英文是 “Ran command npm test”“Edited file src/auth.ts” |
 | `text` | 原文：用户消息、Agent 回复、思考内容。工具调用为 `null` |
 | `tool` | 只有 `tool_call` 才有：工具名、输入、输出、是否报错。输出保存全文，交给判定时再截断 |
 | `parentStep` | 子 agent 的步骤指向启动它的那一步；主会话为 `null` |

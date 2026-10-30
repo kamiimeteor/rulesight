@@ -3,7 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { fileName } from "@/lib/format";
 import { VERDICT_TABS, isVerdictKind, keyStepOf, ruleOf, stepOf, type ReportModel } from "@/lib/model";
-import { STEP_KIND_LABEL, TONE } from "@/lib/tone";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import type { FeedbackMap } from "@/hooks/use-feedback";
 import type { Verdict, VerdictKind } from "../../../src/verdict.ts";
@@ -28,7 +28,7 @@ export function RuleList({ model, tab, feedback, selectedRuleId, onSelectKind, o
         <TabsList className="mx-3 mt-3 mb-2 w-[calc(100%-1.5rem)]">
           {VERDICT_TABS.map((kind) => (
             <TabsTrigger key={kind} value={kind} disabled={model.byKind[kind].length === 0} className="h-[30px] data-[state=active]:bg-card">
-              {TONE[kind].label}
+              {model.t.verdict[kind]}
               <span className={cn("rounded-[5px] px-[5px] font-mono text-[11.5px] leading-[18px]", TONE[kind].soft)}>
                 {model.byKind[kind].length}
               </span>
@@ -70,6 +70,7 @@ function RuleRow({ model, verdict, selected, review, onSelect }: RowProps) {
   }, [selected]);
 
   const tone = TONE[verdict.verdict];
+  const { t } = model;
   const keyStep = keyStepOf(verdict);
   const rule = ruleOf(model, verdict.ruleId);
   return (
@@ -88,16 +89,14 @@ function RuleRow({ model, verdict, selected, review, onSelect }: RowProps) {
       <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
         {keyStep !== null && (
           <>
-            <span className={cn("font-mono", tone.text)}>第 {keyStep} 步</span>
-            <span>{STEP_KIND_LABEL[stepOf(model, keyStep).kind]}</span>
+            <span className={cn("font-mono", tone.text)}>{t.step(keyStep)}</span>
+            <span>{t.stepKind[stepOf(model, keyStep).kind]}</span>
           </>
         )}
-        <span>
-          {fileName(rule.source.file)} 第 {rule.source.line} 行
-        </span>
+        <span>{t.ruleSource(fileName(rule.source.file), rule.source.line)}</span>
         {review !== undefined && (
           <span className={cn("ml-auto", review === "right" ? "text-followed" : "text-violated")}>
-            {review === "right" ? "✓ 判对了" : "✗ 判错了"}
+            {review === "right" ? t.markedRight : t.markedWrong}
           </span>
         )}
       </div>

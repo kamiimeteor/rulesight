@@ -1,4 +1,12 @@
+import type { Lang } from "./lang.ts";
+
 export type Step = TextStep | ToolCallStep;
+
+// Summaries of compaction steps, per output language. Segmenting finds compaction points by these.
+export const COMPACTION_LABELS = {
+  zh: { compaction: "上下文压缩", summary: "上下文压缩摘要" },
+  en: { compaction: "Context compacted", summary: "Compaction summary" },
+} as const satisfies Record<Lang, { compaction: string; summary: string }>;
 
 export interface Session {
   formatVersion: 2;

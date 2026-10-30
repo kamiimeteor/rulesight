@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { evidenceOf, keyStepOf, stepOf, type ReportModel } from "@/lib/model";
-import { STEP_KIND_LABEL, TONE } from "@/lib/tone";
+import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import type { Verdict } from "../../../src/verdict.ts";
 
@@ -19,7 +19,7 @@ function labelTransform(fraction: number): string {
 }
 
 export function ProgressBar({ model, selected, onSelectRule }: Props) {
-  const { stepOrder } = model;
+  const { stepOrder, t } = model;
   const keyStep = selected && keyStepOf(selected);
   const evidence = new Set(selected ? evidenceOf(selected) : []);
   const tone = selected && TONE[selected.verdict];
@@ -39,7 +39,7 @@ export function ProgressBar({ model, selected, onSelectRule }: Props) {
                 className={cn("absolute top-0 rounded-md px-2 text-xs leading-5 font-medium whitespace-nowrap", tone.solid)}
                 style={{ left, transform: labelTransform(fraction) }}
               >
-                第 {n} 步 · 判定依据
+                {t.keyStepLabel(n)}
               </span>
             );
           }
@@ -50,7 +50,7 @@ export function ProgressBar({ model, selected, onSelectRule }: Props) {
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label={`第 ${n} 步有违反：${other.title}`}
+                  aria-label={t.violationAt(n, other.title)}
                   className="absolute -bottom-1 -translate-x-1/2 cursor-pointer rounded px-2 py-1 text-xs leading-none text-violated hover:bg-violated-soft"
                   style={{ left }}
                   onClick={() => onSelectRule(other.ruleId)}
@@ -59,7 +59,7 @@ export function ProgressBar({ model, selected, onSelectRule }: Props) {
                 </button>
               </TooltipTrigger>
               <TooltipContent className="max-w-xs">
-                第 {n} 步有违反：{other.title}（点击查看）
+                {t.violationAtHint(n, other.title)}
               </TooltipContent>
             </Tooltip>
           );
@@ -83,16 +83,16 @@ export function ProgressBar({ model, selected, onSelectRule }: Props) {
                 />
               </TooltipTrigger>
               <TooltipContent className="max-w-xs">
-                第 {n} 步 · {STEP_KIND_LABEL[step.kind]}：{step.summary}
+                {t.stepTooltip(n, t.stepKind[step.kind], step.summary)}
               </TooltipContent>
             </Tooltip>
           );
         })}
       </div>
       <div className="mt-1.5 flex justify-between text-xs text-muted-foreground">
-        <span>第 {firstStep} 步</span>
-        <span>每根细条是一步 · 加高的是当前规则的证据，实色那步是判定依据 · ▼ 别处的违反，点击查看</span>
-        <span>第 {lastStep} 步</span>
+        <span>{firstStep !== undefined && t.step(firstStep)}</span>
+        <span>{t.barLegend}</span>
+        <span>{lastStep !== undefined && t.step(lastStep)}</span>
       </div>
     </Card>
   );
