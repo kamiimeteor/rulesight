@@ -1,0 +1,15 @@
+# 测试会话和私人数据，只在本地用，永远不提交
+private/
+
+.DS_Store
+node_modules/
+.venv/
+__pycache__/
+*.log
+.env*
+report/dist/
+
+# 开源前清理：本地/私密内容永不提交
+.claude/
+ov.conf
+codex_auth.json

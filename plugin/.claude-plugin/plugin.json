@@ -1,0 +1,18 @@
+{
+  "name": "rulesight",
+  "version": "0.1.0",
+  "description": "对照你写给 Claude 的规则（CLAUDE.md）检查当前会话，给每条规则一个判定，并附上证据步骤，生成一份能看懂的报告",
+  "author": {
+    "name": "Kami"
+  },
+  "homepage": "https://github.com/kamiimeteor/rulesight",
+  "repository": "https://github.com/kamiimeteor/rulesight",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "rules",
+    "claude-md",
+    "agent",
+    "audit"
+  ]
+}
