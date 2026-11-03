@@ -2,7 +2,7 @@
 
 Rulesight 是一个 Claude Code 插件：对照你写给 Claude 的规则（`CLAUDE.md`），检查当前这场会话，给每条规则一个判定（遵守 / 违反 / 不适用），附上作为证据的那一步，最后打开一份看得懂的网页报告。
 
-*Rulesight is a Claude Code plugin that checks the current session against the rules in your `CLAUDE.md`, gives each rule a verdict (followed / violated / not applicable) with the step that proves it, and opens a readable HTML report. It speaks English and Chinese; see [Language](#语言--language).*
+*Rulesight is a Claude Code plugin that checks the current session against the rules in your `CLAUDE.md`, gives each rule a verdict (followed / violated / not applicable) with the step that proves it, and opens a readable HTML report. Its language follows your system locale, defaults to English, and can be switched with `RULESIGHT_LANG`; see the Language section below.*
 
 ## 需要先准备
 
@@ -48,7 +48,7 @@ Rulesight 会先告诉你对照了多少条规则、会切成几段、大约花�
 export RULESIGHT_LANG=zh   # 或 en
 ```
 
-*Command output, the report page and the verdict reasons come in English or Chinese. By default Rulesight follows your system language: `RULESIGHT_LANG`, then `LC_ALL`, `LC_MESSAGES`, `LANG`, then Node's `Intl` locale, falling back to English. To pin it, set `RULESIGHT_LANG=en` (or `zh`) before starting Claude Code. The CLI also takes `--lang en|zh`.*
+*Command output, the report page and the verdict reasons come in English or Chinese. By default Rulesight follows your system language: `RULESIGHT_LANG`, then `LC_ALL`, `LC_MESSAGES`, `LANG`, then Node's `Intl` locale, falling back to English. To switch it, set `RULESIGHT_LANG=en` (or `zh`) before starting Claude Code.*
 
 ## 更新和卸载
 
