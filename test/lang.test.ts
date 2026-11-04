@@ -164,7 +164,7 @@ process.stdout.write(JSON.stringify({ is_error: false, result: "", structured_ou
   return { stdout: stdout.replaceAll(dir, "<dir>"), html, verdicts, args, user, dir };
 }
 
-test("RULESIGHT_LANG=zh prints exactly what 7a207fa printed", async () => {
+test("RULESIGHT_LANG=zh prints exactly the recorded Chinese output", async () => {
   const { stdout, verdicts } = await runCli({ RULESIGHT_LANG: "zh", LANG: "en_US.UTF-8" }, "verdicts.zh.json");
   const expected = (await readFile(path.join(FIXTURE, "expected-zh-stdout.txt"), "utf8"));
   assert.equal(stdout, expected);

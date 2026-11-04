@@ -1,7 +1,7 @@
 会话 3f9c2a71-5b4e-4d1a-9e2f-7c8b6a0d1e42：17 步
 规则 7 条：~/todo-app/CLAUDE.md（7 条）
 没找到、已跳过：~/.claude/CLAUDE.md
-要分 1 段判定，估算费用约 $0.02，用时约 1 分钟（费用按接口价格折算，实际走你自己的 Claude 额度）
+要分 1 段判定，估算费用约 $0.03，用时约 1 分钟（费用按接口价格折算，实际走你自己的 Claude 额度）
 RULESIGHT_PLAN {"segments":1,"needsConfirm":false}
 第 1/1 段 完成
 判定完成（7 条规则）：违反 1，遵守 4，不适用 2

@@ -1,6 +1,6 @@
 {
   "name": "rulesight",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "对照你写给 Claude 的规则（CLAUDE.md）检查这场会话：每条规则判成遵守、违反或不适用，指出是哪一步，生成一份能看懂的报告",
   "author": {
     "name": "Kami"
