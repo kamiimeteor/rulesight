@@ -615,11 +615,17 @@ async function readSubagents(sessionDir: string): Promise<SubagentFile[]> {
   );
 }
 
+// pickLang chooses the summary language from the session itself (the user's own messages read the same in either
+// language), so the session is converted once more only when the choice differs. Converting is cheap next to reading.
 export async function readClaudeCodeSession(
   sessionId: string,
-  options: { projectsDir?: string; lang?: Lang } = {},
-): Promise<AdaptResult> {
+  options: { projectsDir?: string; lang?: Lang; pickLang?: (steps: readonly Step[]) => Lang } = {},
+): Promise<AdaptResult & { lang: Lang }> {
   const { file, sessionDir } = await findSessionFile(path.resolve(options.projectsDir ?? DEFAULT_PROJECTS_DIR), sessionId);
   const main = await readParsedFile(file);
-  return toSessionWithStats({ sessionId, main, subagents: await readSubagents(sessionDir), lang: options.lang });
+  const subagents = await readSubagents(sessionDir);
+  const first = options.lang ?? "zh";
+  const result = toSessionWithStats({ sessionId, main, subagents, lang: first });
+  const lang = options.pickLang?.(result.session.steps) ?? first;
+  return lang === first ? { ...result, lang } : { ...toSessionWithStats({ sessionId, main, subagents, lang }), lang };
 }

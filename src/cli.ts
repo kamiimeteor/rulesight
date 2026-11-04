@@ -4,11 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { readClaudeCodeSession } from "./adapters/claude-code.ts";
-import { detectLang, LANGS, parseLang, type Lang } from "./lang.ts";
+import { detectLang, LANGS, parseLang, sessionLang, type Lang } from "./lang.ts";
 import { buildPlan, collectRules, CONFIRM_ABOVE_SEGMENTS, displayPath, judgePlan, parseTimeBound, rangeLabel, type Plan, type RuleSet } from "./pipeline.ts";
 import { parseReportData, slimForReport } from "./report.ts";
 import { renderReportHtml } from "./report-html.ts";
-import type { Session } from "./steps.ts";
+import type { Session, Step } from "./steps.ts";
 import type { VerdictKind } from "./verdict.ts";
 
 // Every line the CLI prints, per output language. RULESIGHT_PLAN / RULESIGHT_REPORT markers stay the same in both.
@@ -96,12 +96,13 @@ function langFlag(argv: readonly string[]): string | undefined {
   return undefined;
 }
 
-// --lang wins; otherwise RULESIGHT_LANG, then the system locale (see lang.ts).
-function resolveLang(argv: readonly string[]): { lang: Lang; badFlag: string | undefined } {
+// --lang wins; otherwise RULESIGHT_LANG, then the session's own language, then the system locale (see lang.ts).
+// Until the session is read, `lang` is the guess without it; `explicit` says the user chose and the session can't override.
+function resolveLang(argv: readonly string[]): { lang: Lang; badFlag: string | undefined; explicit: boolean } {
   const flag = langFlag(argv);
-  if (flag === undefined) return { lang: detectLang(), badFlag: undefined };
-  const lang = parseLang(flag);
-  return lang === undefined ? { lang: detectLang(), badFlag: flag } : { lang, badFlag: undefined };
+  const lang = flag === undefined ? undefined : parseLang(flag);
+  if (lang !== undefined) return { lang, badFlag: undefined, explicit: true };
+  return { lang: detectLang(), badFlag: flag, explicit: parseLang(process.env.RULESIGHT_LANG) !== undefined };
 }
 
 const EXIT_FAILED = 1;
@@ -182,23 +183,26 @@ function bound(flag: "from" | "to", text: string | undefined): number | undefine
 }
 
 interface Prepared {
+  lang: Lang;
   options: Options;
   fullSession: Session;
   ruleSet: RuleSet;
   plan: Plan;
 }
 
-async function prepare(argv: readonly string[], lang: Lang): Promise<Prepared> {
-  const m = MESSAGES[lang];
-  const options = parseOptions(argv, lang);
+async function prepare(argv: readonly string[], guess: Lang, explicit: boolean): Promise<Prepared> {
+  const options = parseOptions(argv, guess);
   const fromMs = bound("from", options.from);
   const toMs = bound("to", options.to);
+  const pickLang = explicit ? undefined : (steps: readonly Step[]) => detectLang({ sessionLang: sessionLang(steps) });
   let fullSession: Session;
+  let lang: Lang;
   try {
-    ({ session: fullSession } = await readClaudeCodeSession(options.session, { projectsDir: options.projectsDir, lang }));
+    ({ session: fullSession, lang } = await readClaudeCodeSession(options.session, { projectsDir: options.projectsDir, lang: guess, pickLang }));
   } catch (error) {
-    throw new CliError(m.cantRead(error instanceof Error ? error.message : String(error)));
+    throw new CliError(MESSAGES[guess].cantRead(error instanceof Error ? error.message : String(error)));
   }
+  const m = MESSAGES[lang];
   // The session's own project, not the folder this process happens to run in.
   const ruleSet = await collectRules(options.cwd ?? fullSession.cwd);
   if (ruleSet.rules.length === 0) {
@@ -208,7 +212,7 @@ async function prepare(argv: readonly string[], lang: Lang): Promise<Prepared> {
   }
   try {
     const plan = buildPlan({ fullSession, rules: ruleSet.rules, fromMs, toMs, lang });
-    return { options, fullSession, ruleSet, plan };
+    return { lang, options, fullSession, ruleSet, plan };
   } catch (error) {
     throw new CliError(error instanceof Error ? error.message : String(error));
   }
@@ -243,14 +247,15 @@ function defaultOutDir(): string {
   return data ? path.join(data, "reports") : path.join(os.homedir(), ".rulesight", "reports");
 }
 
-async function planCommand(argv: readonly string[], lang: Lang): Promise<void> {
-  printPlan(await prepare(argv, lang), MESSAGES[lang]);
+async function planCommand(argv: readonly string[], guess: Lang, explicit: boolean): Promise<void> {
+  const prepared = await prepare(argv, guess, explicit);
+  printPlan(prepared, MESSAGES[prepared.lang]);
 }
 
-async function runCommand(argv: readonly string[], lang: Lang): Promise<void> {
+async function runCommand(argv: readonly string[], guess: Lang, explicit: boolean): Promise<void> {
+  const prepared = await prepare(argv, guess, explicit);
+  const { lang, options, fullSession, ruleSet, plan } = prepared;
   const m = MESSAGES[lang];
-  const prepared = await prepare(argv, lang);
-  const { options, fullSession, ruleSet, plan } = prepared;
   printPlan(prepared, m);
   if (needsConfirm(plan) && !options.yes) {
     console.log(m.needsConfirm(CONFIRM_ABOVE_SEGMENTS));
@@ -293,19 +298,19 @@ async function runCommand(argv: readonly string[], lang: Lang): Promise<void> {
   console.log(`RULESIGHT_REPORT ${reportFile}`);
 }
 
-async function main(argv: readonly string[], lang: Lang, badFlag: string | undefined): Promise<void> {
+async function main(argv: readonly string[], lang: Lang, badFlag: string | undefined, explicit: boolean): Promise<void> {
   const m = MESSAGES[lang];
   if (badFlag !== undefined) throw new CliError(`${m.badLang(badFlag)}\n${m.usage}`, EXIT_USAGE);
   const [command, ...rest] = argv;
-  if (command === "plan") await planCommand(rest, lang);
-  else if (command === "run") await runCommand(rest, lang);
+  if (command === "plan") await planCommand(rest, lang, explicit);
+  else if (command === "run") await runCommand(rest, lang, explicit);
   else throw new CliError(m.usage, EXIT_USAGE);
 }
 
 const argv = process.argv.slice(2);
-const { lang, badFlag } = resolveLang(argv);
+const { lang, badFlag, explicit } = resolveLang(argv);
 try {
-  await main(argv, lang, badFlag);
+  await main(argv, lang, badFlag, explicit);
 } catch (error) {
   if (error instanceof CliError) {
     console.error(error.message);

@@ -510,7 +510,11 @@ async function readSubagents(sessionDir) {
 async function readClaudeCodeSession(sessionId, options = {}) {
   const { file, sessionDir } = await findSessionFile(path.resolve(options.projectsDir ?? DEFAULT_PROJECTS_DIR), sessionId);
   const main2 = await readParsedFile(file);
-  return toSessionWithStats({ sessionId, main: main2, subagents: await readSubagents(sessionDir), lang: options.lang });
+  const subagents = await readSubagents(sessionDir);
+  const first = options.lang ?? "zh";
+  const result = toSessionWithStats({ sessionId, main: main2, subagents, lang: first });
+  const lang2 = options.pickLang?.(result.session.steps) ?? first;
+  return lang2 === first ? { ...result, lang: lang2 } : { ...toSessionWithStats({ sessionId, main: main2, subagents, lang: lang2 }), lang: lang2 };
 }
 
 // src/lang.ts
@@ -530,11 +534,28 @@ function systemIntlLocale() {
 function detectLang(sources = {}) {
   const env = sources.env ?? process.env;
   const intlLocale = "intlLocale" in sources ? sources.intlLocale : systemIntlLocale();
-  for (const value of [env.RULESIGHT_LANG, env.LC_ALL, env.LC_MESSAGES, env.LANG, intlLocale]) {
+  for (const value of [env.RULESIGHT_LANG, sources.sessionLang, env.LC_ALL, env.LC_MESSAGES, env.LANG, intlLocale]) {
     const lang2 = parseLang(value);
     if (lang2 !== void 0) return lang2;
   }
   return DEFAULT_LANG;
+}
+var CODE_OR_URL = /```[\s\S]*?```|`[^`\n]*`|https?:\/\/\S+/g;
+var HAN = new RegExp("\\p{Script=Han}", "gu");
+var KANA_OR_HANGUL = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+var LETTER = new RegExp("\\p{L}", "u");
+function sessionLang(steps) {
+  let zh = 0;
+  let other = 0;
+  for (const step of steps) {
+    if (step.kind !== "user_message" || step.agent !== "main") continue;
+    const prose = step.text.replace(CODE_OR_URL, " ");
+    if (!LETTER.test(prose)) continue;
+    if ((prose.match(HAN)?.length ?? 0) >= 2 && !KANA_OR_HANGUL.test(prose)) zh += 1;
+    else other += 1;
+  }
+  if (zh + other === 0) return void 0;
+  return zh >= other ? "zh" : "en";
 }
 
 // src/pipeline.ts
@@ -1467,9 +1488,9 @@ function langFlag(argv2) {
 }
 function resolveLang(argv2) {
   const flag = langFlag(argv2);
-  if (flag === void 0) return { lang: detectLang(), badFlag: void 0 };
-  const lang2 = parseLang(flag);
-  return lang2 === void 0 ? { lang: detectLang(), badFlag: flag } : { lang: lang2, badFlag: void 0 };
+  const lang2 = flag === void 0 ? void 0 : parseLang(flag);
+  if (lang2 !== void 0) return { lang: lang2, badFlag: void 0, explicit: true };
+  return { lang: detectLang(), badFlag: flag, explicit: parseLang(process.env.RULESIGHT_LANG) !== void 0 };
 }
 var EXIT_FAILED = 1;
 var EXIT_USAGE = 2;
@@ -1531,17 +1552,19 @@ function bound(flag, text) {
     throw new CliError(error instanceof Error ? error.message : String(error), EXIT_USAGE);
   }
 }
-async function prepare(argv2, lang2) {
-  const m = MESSAGES[lang2];
-  const options = parseOptions(argv2, lang2);
+async function prepare(argv2, guess, explicit2) {
+  const options = parseOptions(argv2, guess);
   const fromMs = bound("from", options.from);
   const toMs = bound("to", options.to);
+  const pickLang = explicit2 ? void 0 : (steps) => detectLang({ sessionLang: sessionLang(steps) });
   let fullSession;
+  let lang2;
   try {
-    ({ session: fullSession } = await readClaudeCodeSession(options.session, { projectsDir: options.projectsDir, lang: lang2 }));
+    ({ session: fullSession, lang: lang2 } = await readClaudeCodeSession(options.session, { projectsDir: options.projectsDir, lang: guess, pickLang }));
   } catch (error) {
-    throw new CliError(m.cantRead(error instanceof Error ? error.message : String(error)));
+    throw new CliError(MESSAGES[guess].cantRead(error instanceof Error ? error.message : String(error)));
   }
+  const m = MESSAGES[lang2];
   const ruleSet = await collectRules(options.cwd ?? fullSession.cwd);
   if (ruleSet.rules.length === 0) {
     const where = ruleSet.files.length > 0 ? m.noRulesIn(ruleSet.files.map((file) => file.displayPath).join(m.list)) : m.noRuleFiles(ruleSet.missing.join(m.list));
@@ -1549,7 +1572,7 @@ async function prepare(argv2, lang2) {
   }
   try {
     const plan = buildPlan({ fullSession, rules: ruleSet.rules, fromMs, toMs, lang: lang2 });
-    return { options, fullSession, ruleSet, plan };
+    return { lang: lang2, options, fullSession, ruleSet, plan };
   } catch (error) {
     throw new CliError(error instanceof Error ? error.message : String(error));
   }
@@ -1579,13 +1602,14 @@ function defaultOutDir() {
   const data = process.env.CLAUDE_PLUGIN_DATA;
   return data ? path3.join(data, "reports") : path3.join(os3.homedir(), ".rulesight", "reports");
 }
-async function planCommand(argv2, lang2) {
-  printPlan(await prepare(argv2, lang2), MESSAGES[lang2]);
+async function planCommand(argv2, guess, explicit2) {
+  const prepared = await prepare(argv2, guess, explicit2);
+  printPlan(prepared, MESSAGES[prepared.lang]);
 }
-async function runCommand(argv2, lang2) {
+async function runCommand(argv2, guess, explicit2) {
+  const prepared = await prepare(argv2, guess, explicit2);
+  const { lang: lang2, options, fullSession, ruleSet, plan } = prepared;
   const m = MESSAGES[lang2];
-  const prepared = await prepare(argv2, lang2);
-  const { options, fullSession, ruleSet, plan } = prepared;
   printPlan(prepared, m);
   if (needsConfirm(plan) && !options.yes) {
     console.log(m.needsConfirm(CONFIRM_ABOVE_SEGMENTS));
@@ -1624,19 +1648,19 @@ async function runCommand(argv2, lang2) {
   console.log(m.verdictsFile(displayPath2(verdictsFile)));
   console.log(`RULESIGHT_REPORT ${reportFile}`);
 }
-async function main(argv2, lang2, badFlag2) {
+async function main(argv2, lang2, badFlag2, explicit2) {
   const m = MESSAGES[lang2];
   if (badFlag2 !== void 0) throw new CliError(`${m.badLang(badFlag2)}
 ${m.usage}`, EXIT_USAGE);
   const [command, ...rest] = argv2;
-  if (command === "plan") await planCommand(rest, lang2);
-  else if (command === "run") await runCommand(rest, lang2);
+  if (command === "plan") await planCommand(rest, lang2, explicit2);
+  else if (command === "run") await runCommand(rest, lang2, explicit2);
   else throw new CliError(m.usage, EXIT_USAGE);
 }
 var argv = process.argv.slice(2);
-var { lang, badFlag } = resolveLang(argv);
+var { lang, badFlag, explicit } = resolveLang(argv);
 try {
-  await main(argv, lang, badFlag);
+  await main(argv, lang, badFlag, explicit);
 } catch (error) {
   if (error instanceof CliError) {
     console.error(error.message);

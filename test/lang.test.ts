@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { readClaudeCodeSession } from "../src/adapters/claude-code.ts";
 import { buildJudgePrompt } from "../src/judge.ts";
-import { detectLang, parseLang } from "../src/lang.ts";
+import { detectLang, parseLang, sessionLang } from "../src/lang.ts";
 import { parseRules } from "../src/rules.ts";
 import { mergeSegmentVerdicts, parseVerdictsFile, verdictOutputSchema, type SegmentRecord } from "../src/verdict.ts";
 
@@ -44,6 +44,24 @@ test("detectLang: RULESIGHT_LANG, then LC_ALL, LC_MESSAGES, LANG, then Intl, the
   assert.equal(detect({}, "zh-CN"), "zh");
   assert.equal(detect({}, "de-DE"), "en");
   assert.equal(detect({}, undefined), "en");
+});
+
+test("detectLang: the session's language comes after RULESIGHT_LANG and before the system locale", () => {
+  assert.equal(detectLang({ env: { LANG: "en_GB.UTF-8" }, sessionLang: "zh", intlLocale: "en-GB" }), "zh");
+  assert.equal(detectLang({ env: { LANG: "zh_CN.UTF-8" }, sessionLang: "en" }), "en");
+  assert.equal(detectLang({ env: { RULESIGHT_LANG: "en", LANG: "zh_CN.UTF-8" }, sessionLang: "zh" }), "en");
+  assert.equal(detectLang({ env: { LANG: "zh_CN.UTF-8" }, sessionLang: undefined }), "zh");
+});
+
+test("sessionLang counts the user's own messages in the main session", () => {
+  const step = (text: string, agent = "main", kind: "user_message" | "agent_message" = "user_message") =>
+    ({ n: "1", kind, agent, summary: "", text, tool: null, parentStep: null, at: null, raw: [] });
+  assert.equal(sessionLang([step("帮我把测试跑一遍"), step("ok")]), "zh");
+  assert.equal(sessionLang([step("Run the tests"), step("then commit"), step("好的")]), "en");
+  // Code, links, a sub-agent's prompt and Claude's own replies don't vote.
+  assert.equal(sessionLang([step("`npm test` https://example.com"), step("用中文", "agent-1"), step("Sure", "main", "agent_message")]), undefined);
+  assert.equal(sessionLang([step("テストを実行して")]), "en");
+  assert.equal(sessionLang([]), undefined);
 });
 
 async function fixtureSession(lang: "en" | "zh") {
@@ -129,8 +147,8 @@ process.stdout.write(JSON.stringify({ is_error: false, result: "", structured_ou
   return { stdout: stdout.replaceAll(dir, "<dir>"), html, verdicts, args };
 }
 
-test("CLI in a Chinese locale prints exactly what 7a207fa printed", async () => {
-  const { stdout, verdicts } = await runCli({ LANG: "zh_CN.UTF-8" }, "verdicts.zh.json");
+test("RULESIGHT_LANG=zh prints exactly what 7a207fa printed", async () => {
+  const { stdout, verdicts } = await runCli({ RULESIGHT_LANG: "zh", LANG: "en_US.UTF-8" }, "verdicts.zh.json");
   const expected = (await readFile(path.join(FIXTURE, "expected-zh-stdout.txt"), "utf8"));
   assert.equal(stdout, expected);
   assert.equal(verdicts.lang, "zh");
@@ -150,6 +168,15 @@ test("RULESIGHT_LANG=en: English CLI output, English judge prompt, report data m
   const data = JSON.parse(/<script type="application\/json" id="rulesight-data">([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "null");
   assert.equal(data.verdicts.lang, "en");
   assert.ok(html.includes("Key evidence") && html.includes("What happened"), "template carries the English UI strings");
+});
+
+test("without RULESIGHT_LANG, the session's language beats a Chinese system locale", async () => {
+  // The fixture's user writes in English.
+  const { stdout, verdicts, args } = await runCli({ LANG: "zh_CN.UTF-8" }, "verdicts.en.json");
+  assert.match(stdout, /^Session 3f9c2a71-5b4e-4d1a-9e2f-7c8b6a0d1e42: 17 steps$/m);
+  assert.ok(!/[\u4e00-\u9fff]/.test(stdout), "no Chinese in English CLI output");
+  assert.equal(verdicts.lang, "en");
+  assert.match(args[args.indexOf("--system-prompt") + 1] ?? "", /Write all text in English/);
 });
 
 test("--lang beats RULESIGHT_LANG; a bad --lang is a usage error", async () => {
