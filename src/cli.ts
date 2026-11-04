@@ -1,11 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { readClaudeCodeSession } from "./adapters/claude-code.ts";
 import { detectLang, LANGS, parseLang, sessionLang, type Lang } from "./lang.ts";
-import { buildPlan, collectRules, CONFIRM_ABOVE_SEGMENTS, displayPath, judgePlan, parseTimeBound, rangeLabel, type Plan, type RuleSet } from "./pipeline.ts";
+import { beforeLastInvocation, buildPlan, collectRules, CONFIRM_ABOVE_SEGMENTS, displayPath, judgePlan, parseTimeBound, rangeLabel, type Plan, type RuleSet } from "./pipeline.ts";
 import { parseReportData, slimForReport } from "./report.ts";
 import { renderReportHtml } from "./report-html.ts";
 import type { Session, Step } from "./steps.ts";
@@ -47,6 +47,10 @@ const MESSAGES = {
     cost: (usd: string, seconds: string) => `实际花费 $${usd}，各段用时合计 ${seconds} 秒`,
     verdictsFile: (file: string) => `判定文件：${file}`,
     crashed: (detail: string) => `出错了：${detail}`,
+    excludedSelf: (count: number) => `不检查 Rulesight 自己运行的 ${count} 步（从最后一次输入 /rulesight 开始）`,
+    nothingBefore: "这场会话在输入 /rulesight 之前还没有可以检查的内容。先正常让 Claude 做点事，再运行 /rulesight:rulesight。",
+    outDirFallback: (wanted: string, used: string) => `报告目录 ${wanted} 写不进去（可能被沙盒挡住了），改存到 ${used}`,
+    noOutDir: (wanted: string, detail: string) => `报告目录 ${wanted} 和临时目录都写不进去，没有开始判定：${detail}`,
   },
   en: {
     usage: `Usage:
@@ -82,6 +86,10 @@ const MESSAGES = {
     cost: (usd: string, seconds: string) => `Actual cost $${usd}, ${seconds} s across segments`,
     verdictsFile: (file: string) => `Verdicts file: ${file}`,
     crashed: (detail: string) => `Something went wrong: ${detail}`,
+    excludedSelf: (count: number) => `Not checking Rulesight's own run: ${count} steps from the last /rulesight on`,
+    nothingBefore: "Nothing in this session to check before /rulesight was typed. Use Claude for something first, then run /rulesight:rulesight.",
+    outDirFallback: (wanted: string, used: string) => `Can't write to the report folder ${wanted} (a sandbox may be blocking it); saving to ${used} instead`,
+    noOutDir: (wanted: string, detail: string) => `Can't write to the report folder ${wanted} or the temp folder, so judging didn't start: ${detail}`,
   },
 } as const;
 
@@ -186,6 +194,7 @@ interface Prepared {
   lang: Lang;
   options: Options;
   fullSession: Session;
+  excluded: number;
   ruleSet: RuleSet;
   plan: Plan;
 }
@@ -195,14 +204,16 @@ async function prepare(argv: readonly string[], guess: Lang, explicit: boolean):
   const fromMs = bound("from", options.from);
   const toMs = bound("to", options.to);
   const pickLang = explicit ? undefined : (steps: readonly Step[]) => detectLang({ sessionLang: sessionLang(steps) });
-  let fullSession: Session;
+  let read: Session;
   let lang: Lang;
   try {
-    ({ session: fullSession, lang } = await readClaudeCodeSession(options.session, { projectsDir: options.projectsDir, lang: guess, pickLang }));
+    ({ session: read, lang } = await readClaudeCodeSession(options.session, { projectsDir: options.projectsDir, lang: guess, pickLang }));
   } catch (error) {
     throw new CliError(MESSAGES[guess].cantRead(error instanceof Error ? error.message : String(error)));
   }
   const m = MESSAGES[lang];
+  const { session: fullSession, excluded } = beforeLastInvocation(read);
+  if (fullSession.steps.length === 0) throw new CliError(m.nothingBefore);
   // The session's own project, not the folder this process happens to run in.
   const ruleSet = await collectRules(options.cwd ?? fullSession.cwd);
   if (ruleSet.rules.length === 0) {
@@ -212,7 +223,7 @@ async function prepare(argv: readonly string[], guess: Lang, explicit: boolean):
   }
   try {
     const plan = buildPlan({ fullSession, rules: ruleSet.rules, fromMs, toMs, lang });
-    return { lang, options, fullSession, ruleSet, plan };
+    return { lang, options, fullSession, excluded, ruleSet, plan };
   } catch (error) {
     throw new CliError(error instanceof Error ? error.message : String(error));
   }
@@ -222,9 +233,10 @@ function needsConfirm(plan: Plan): boolean {
   return plan.segments.length > CONFIRM_ABOVE_SEGMENTS;
 }
 
-function printPlan({ fullSession, ruleSet, plan }: Prepared, m: Messages): void {
+function printPlan({ fullSession, excluded, ruleSet, plan }: Prepared, m: Messages): void {
   const { session, ranged, segments, estimatedCostUsd, estimatedMinutes } = plan;
   console.log(m.sessionLine(session.sessionId, fullSession.steps.length, ranged ? session.steps.length : null));
+  if (excluded > 0) console.log(m.excludedSelf(excluded));
   console.log(m.rulesLine(ruleSet.rules.length, ruleSet.files.map((file) => m.ruleFile(file.displayPath, file.count)).join(m.ruleFileSeparator)));
   if (ruleSet.missing.length > 0) console.log(m.skipped(ruleSet.missing.join(m.list)));
   console.log(m.estimate(segments.length, estimatedCostUsd.toFixed(2), Math.max(1, Math.round(estimatedMinutes))));
@@ -240,6 +252,29 @@ async function readTemplate(m: Messages): Promise<string> {
     }
   }
   throw new CliError(m.noTemplate);
+}
+
+// Checked before judging: a sandbox that blocks the report folder used to surface only after the quota was spent.
+async function writableOutDir(wanted: string, m: Messages): Promise<string> {
+  const tryDir = async (dir: string) => {
+    await mkdir(dir, { recursive: true });
+    const probe = path.join(dir, `.rulesight-write-check-${process.pid}`);
+    await writeFile(probe, "");
+    await rm(probe, { force: true });
+  };
+  try {
+    await tryDir(wanted);
+    return wanted;
+  } catch (error) {
+    const fallback = path.join(os.tmpdir(), "rulesight-reports");
+    try {
+      await tryDir(fallback);
+    } catch {
+      throw new CliError(m.noOutDir(wanted, error instanceof Error ? error.message : String(error)));
+    }
+    console.log(m.outDirFallback(wanted, fallback));
+    return fallback;
+  }
 }
 
 function defaultOutDir(): string {
@@ -263,6 +298,7 @@ async function runCommand(argv: readonly string[], guess: Lang, explicit: boolea
     return;
   }
 
+  const outDir = await writableOutDir(path.resolve(options.outDir ?? defaultOutDir()), m);
   const { segments } = plan;
   const verdicts = await judgePlan({
     plan: plan,
@@ -279,8 +315,6 @@ async function runCommand(argv: readonly string[], guess: Lang, explicit: boolea
     throw new CliError(m.allFailed(failed.length, failed[0]?.status === "failed" ? failed[0].error : m.unknown));
   }
 
-  const outDir = path.resolve(options.outDir ?? defaultOutDir());
-  await mkdir(outDir, { recursive: true });
   const base = path.join(outDir, `${fullSession.sessionId}${rangeLabel(options.from, options.to)}`);
   const verdictsFile = `${base}.verdicts.json`;
   const reportFile = `${base}.report.html`;

@@ -1,7 +1,7 @@
 // Run with `npm test` after `npm run build:plugin`: the CLI tests drive the shipped bundle, not the sources.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, chmod, copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -61,6 +61,9 @@ test("sessionLang counts the user's own messages in the main session", () => {
   // Code, links, a sub-agent's prompt and Claude's own replies don't vote.
   assert.equal(sessionLang([step("`npm test` https://example.com"), step("用中文", "agent-1"), step("Sure", "main", "agent_message")]), undefined);
   assert.equal(sessionLang([step("テストを実行して")]), "en");
+  // A slash command's name and shell commands the user typed don't vote; the text after a command does.
+  assert.equal(sessionLang([step("/rulesight:rulesight 读一下 README"), step("/rulesight:rulesight"), step('<bash-input>open "a.html"</bash-input>')]), "zh");
+  assert.equal(sessionLang([step("/compact"), step("<bash-input>ls</bash-input><bash-stdout>README.md</bash-stdout>")]), undefined);
   assert.equal(sessionLang([]), undefined);
 });
 
@@ -115,7 +118,16 @@ test("merged titles and verdict files carry the language", () => {
 });
 
 // Drives the bundle end to end with a stub in place of `claude -p` that returns fixture verdicts.
-async function runCli(env: Record<string, string>, verdictsFixture: string, extraArgs: string[] = []) {
+// The /rulesight run itself, appended after the fixture: a bare slash command, then Claude running the plugin.
+const SESSION_FIELDS = { isSidechain: false, userType: "external", cwd: "/home/dev/todo-app", sessionId: SESSION_ID, version: "2.1.301", gitBranch: "main" };
+const RULESIGHT_RUN = [
+  { ...SESSION_FIELDS, parentUuid: "cb9be71b-ae3a-53c4-9463-fb4c9985164c", type: "user", uuid: "aa000000-0000-4000-8000-000000000001", timestamp: "2026-10-24T09:30:00.000Z",
+    message: { role: "user", content: "<command-name>/rulesight:rulesight</command-name>\n<command-message>rulesight:rulesight</command-message>\n<command-args></command-args>" } },
+  { ...SESSION_FIELDS, parentUuid: "aa000000-0000-4000-8000-000000000001", type: "assistant", uuid: "aa000000-0000-4000-8000-000000000002", timestamp: "2026-10-24T09:30:05.000Z",
+    message: { role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "text", text: "Running Rulesight on this session." }] } },
+].map((entry) => JSON.stringify(entry)).join("\n");
+
+async function runCli(env: Record<string, string>, verdictsFixture: string, extraArgs: string[] = [], options: { appendJsonl?: string; outDir?: (dir: string) => Promise<string> } = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "rulesight-cli-"));
   const home = path.join(dir, "home");
   const projects = path.join(dir, "projects", "-home-dev-todo-app");
@@ -123,6 +135,8 @@ async function runCli(env: Record<string, string>, verdictsFixture: string, extr
   await mkdir(projects, { recursive: true });
   await copyFile(path.join(FIXTURE, "CLAUDE.md"), path.join(home, "todo-app", "CLAUDE.md"));
   await copyFile(path.join(FIXTURE, "session.jsonl"), path.join(projects, `${SESSION_ID}.jsonl`));
+  if (options.appendJsonl !== undefined) await appendFile(path.join(projects, `${SESSION_ID}.jsonl`), `\n${options.appendJsonl}\n`);
+  const outDir = options.outDir === undefined ? path.join(dir, "out") : await options.outDir(dir);
   const stub = path.join(dir, "stub-claude.mjs");
   await writeFile(
     stub,
@@ -130,21 +144,24 @@ async function runCli(env: Record<string, string>, verdictsFixture: string, extr
 import fs from "node:fs";
 const args = process.argv.slice(2);
 fs.writeFileSync(${JSON.stringify(path.join(dir, "args.json"))}, JSON.stringify(args));
-fs.readFileSync(0);
+fs.writeFileSync(${JSON.stringify(path.join(dir, "stdin.txt"))}, fs.readFileSync(0));
 process.stdout.write(JSON.stringify({ is_error: false, result: "", structured_output: JSON.parse(fs.readFileSync(${JSON.stringify(path.join(FIXTURE, verdictsFixture))}, "utf8")), total_cost_usd: 0, num_turns: 1, duration_ms: 1 }));
 `,
   );
   await chmod(stub, 0o755);
-  const clean = { PATH: process.env.PATH ?? "", HOME: home, RULESIGHT_CLAUDE_BIN: stub };
+  await mkdir(path.join(dir, "tmp"));
+  const clean = { PATH: process.env.PATH ?? "", HOME: home, TMPDIR: path.join(dir, "tmp"), RULESIGHT_CLAUDE_BIN: stub };
   const { stdout } = await run(
     process.execPath,
-    [BUNDLE, "run", "--session", SESSION_ID, "--projects-dir", path.dirname(projects), "--cwd", path.join(home, "todo-app"), "--out-dir", path.join(dir, "out"), ...extraArgs],
+    [BUNDLE, "run", "--session", SESSION_ID, "--projects-dir", path.dirname(projects), "--cwd", path.join(home, "todo-app"), "--out-dir", outDir, ...extraArgs],
     { env: { ...clean, ...env } },
   );
-  const html = await readFile(path.join(dir, "out", `${SESSION_ID}.report.html`), "utf8");
-  const verdicts = JSON.parse(await readFile(path.join(dir, "out", `${SESSION_ID}.verdicts.json`), "utf8"));
+  const reportFile = /^RULESIGHT_REPORT (.+)$/m.exec(stdout)?.[1] ?? "";
+  const html = await readFile(reportFile, "utf8");
+  const verdicts = JSON.parse(await readFile(reportFile.replace(/\.report\.html$/, ".verdicts.json"), "utf8"));
   const args: string[] = JSON.parse(await readFile(path.join(dir, "args.json"), "utf8"));
-  return { stdout: stdout.replaceAll(dir, "<dir>"), html, verdicts, args };
+  const user = await readFile(path.join(dir, "stdin.txt"), "utf8");
+  return { stdout: stdout.replaceAll(dir, "<dir>"), html, verdicts, args, user, dir };
 }
 
 test("RULESIGHT_LANG=zh prints exactly what 7a207fa printed", async () => {
@@ -187,4 +204,43 @@ test("--lang beats RULESIGHT_LANG; a bad --lang is a usage error", async () => {
     assert.match(error.stderr ?? "", /--lang must be en or zh: fr/);
     return true;
   });
+});
+
+test("the last /rulesight and everything after it is left out of the check", async () => {
+  const { stdout, user, verdicts } = await runCli({ RULESIGHT_LANG: "en" }, "verdicts.en.json", [], { appendJsonl: RULESIGHT_RUN });
+  assert.match(stdout, /^Session 3f9c2a71-5b4e-4d1a-9e2f-7c8b6a0d1e42: 17 steps$/m);
+  assert.match(stdout, /^Not checking Rulesight's own run: 2 steps from the last \/rulesight on$/m);
+  assert.ok(user.includes("Done. Todos now take an optional due date"), "the work before /rulesight is judged");
+  assert.ok(!user.includes("/rulesight") && !user.includes("Running Rulesight"), "Rulesight's own run is not judged");
+  assert.equal(verdicts.lang, "en");
+});
+
+test("nothing to check before /rulesight: stops before judging", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "rulesight-empty-"));
+  const projects = path.join(dir, "projects", "-home-dev-todo-app");
+  await mkdir(projects, { recursive: true });
+  await writeFile(path.join(projects, `${SESSION_ID}.jsonl`), `${RULESIGHT_RUN}\n`);
+  await assert.rejects(
+    run(process.execPath, [BUNDLE, "plan", "--session", SESSION_ID, "--projects-dir", path.dirname(projects), "--cwd", FIXTURE], { env: { PATH: process.env.PATH ?? "", RULESIGHT_LANG: "en" } }),
+    (error: { code?: number; stderr?: string }) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stderr ?? "", /^Nothing in this session to check before \/rulesight was typed/m);
+      return true;
+    },
+  );
+});
+
+test("a report folder that can't be written falls back to the temp folder before judging", async () => {
+  const { stdout } = await runCli({ RULESIGHT_LANG: "en" }, "verdicts.en.json", [], {
+    outDir: async (base) => {
+      const locked = path.join(base, "locked");
+      await mkdir(locked);
+      await chmod(locked, 0o500);
+      return path.join(locked, "reports");
+    },
+  });
+  // stdout has the temp test folder replaced by <dir>.
+  assert.match(stdout, /^Can't write to the report folder <dir>\/locked\/reports \(a sandbox may be blocking it\); saving to <dir>\/tmp\/rulesight-reports instead$/m);
+  assert.ok(stdout.indexOf("Can't write") < stdout.indexOf("Segment 1/1"), "the check runs before judging");
+  assert.match(stdout, /^RULESIGHT_REPORT <dir>\/tmp\/rulesight-reports\/.+\.report\.html$/m);
 });

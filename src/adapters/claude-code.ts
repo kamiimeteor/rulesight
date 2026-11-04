@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import type { Lang } from "../lang.ts";
-import { COMPACTION_LABELS, type Session, type Step, type TextStep, type ToolCallStep } from "../steps.ts";
+import { COMPACTION_LABELS, RULESIGHT_COMMAND, type Session, type Step, type TextStep, type ToolCallStep } from "../steps.ts";
 
 // Boundary: everything below `parseEntryLine` works on these typed shapes only.
 
@@ -371,11 +371,12 @@ function isCliNoise(text: string): boolean {
   return CLI_NOISE_PREFIXES.some((prefix) => head.startsWith(prefix));
 }
 
-// A slash command typed with arguments carries the user's own instruction in <command-args>.
+// A slash command typed with arguments carries the user's own instruction in <command-args>. A bare /rulesight is kept
+// too: it marks where Rulesight's own run starts, which the CLI cuts off before judging (see beforeLastInvocation).
 function typedCommand(text: string): string | null {
   const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim();
-  if (args === undefined || args === "") return null;
   const name = /<command-name>([\s\S]*?)<\/command-name>/.exec(text)?.[1]?.trim();
+  if (args === undefined || args === "") return name !== undefined && RULESIGHT_COMMAND.test(name) ? name : null;
   return name === undefined || name === "" ? args : `${name} ${args}`;
 }
 

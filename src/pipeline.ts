@@ -5,7 +5,7 @@ import { buildJudgePrompt, runSegments } from "./judge.ts";
 import type { Lang } from "./lang.ts";
 import { parseRules, type Rule } from "./rules.ts";
 import { DEFAULT_MAX_SEGMENT_CHARS, planSegments, sliceByTime, type Segment } from "./segment.ts";
-import type { Session } from "./steps.ts";
+import { RULESIGHT_COMMAND, type Session } from "./steps.ts";
 import { mergeSegmentVerdicts, type Rejection, type SegmentRecord, type VerdictsFile } from "./verdict.ts";
 
 export const CONCURRENCY = 3;
@@ -18,6 +18,18 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 export function displayPath(file: string): string {
   const home = os.homedir();
   return file === home || file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file;
+}
+
+// The last /rulesight and everything after it (the plan, the judging, retries) is Rulesight's own run, not the work
+// being checked, so it is cut off. Earlier runs in the same session stay: they happened before this check.
+export function beforeLastInvocation(session: Session): { session: Session; excluded: number } {
+  const index = session.steps.findLastIndex(
+    (step) => step.kind === "user_message" && step.agent === "main" && RULESIGHT_COMMAND.test(step.text.trim()),
+  );
+  if (index === -1) return { session, excluded: 0 };
+  const steps = session.steps.slice(0, index);
+  const endedAt = steps.findLast((step) => step.at !== null)?.at ?? session.endedAt;
+  return { session: { ...session, steps, endedAt }, excluded: session.steps.length - index };
 }
 
 // Times are UTC. A date-only --to covers that whole day.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/cli.ts
-import { mkdir, readFile as readFile3, writeFile } from "node:fs/promises";
+import { mkdir, readFile as readFile3, rm, writeFile } from "node:fs/promises";
 import os3 from "node:os";
 import path3 from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ var COMPACTION_LABELS = {
   zh: { compaction: "\u4E0A\u4E0B\u6587\u538B\u7F29", summary: "\u4E0A\u4E0B\u6587\u538B\u7F29\u6458\u8981" },
   en: { compaction: "Context compacted", summary: "Compaction summary" }
 };
+var RULESIGHT_COMMAND = /^\/rulesight(?::rulesight)?(?![\w:-])/;
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -298,8 +299,8 @@ function isCliNoise(text) {
 }
 function typedCommand(text) {
   const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim();
-  if (args === void 0 || args === "") return null;
   const name = /<command-name>([\s\S]*?)<\/command-name>/.exec(text)?.[1]?.trim();
+  if (args === void 0 || args === "") return name !== void 0 && RULESIGHT_COMMAND.test(name) ? name : null;
   return name === void 0 || name === "" ? args : `${name} ${args}`;
 }
 function orderByTime(entries) {
@@ -580,7 +581,7 @@ function detectLang(sources = {}) {
   }
   return DEFAULT_LANG;
 }
-var CODE_OR_URL = /```[\s\S]*?```|`[^`\n]*`|https?:\/\/\S+/g;
+var NOT_PROSE = /```[\s\S]*?```|`[^`\n]*`|https?:\/\/\S+|<(bash-[a-z]+)>[\s\S]*?<\/\1>|^\s*\/[\w:-]+/g;
 var HAN = new RegExp("\\p{Script=Han}", "gu");
 var KANA_OR_HANGUL = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 var LETTER = new RegExp("\\p{L}", "u");
@@ -589,7 +590,7 @@ function sessionLang(steps) {
   let other = 0;
   for (const step of steps) {
     if (step.kind !== "user_message" || step.agent !== "main") continue;
-    const prose = step.text.replace(CODE_OR_URL, " ");
+    const prose = step.text.replace(NOT_PROSE, " ");
     if (!LETTER.test(prose)) continue;
     if ((prose.match(HAN)?.length ?? 0) >= 2 && !KANA_OR_HANGUL.test(prose)) zh += 1;
     else other += 1;
@@ -1333,6 +1334,15 @@ function displayPath2(file) {
   const home = os2.homedir();
   return file === home || file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file;
 }
+function beforeLastInvocation(session) {
+  const index = session.steps.findLastIndex(
+    (step) => step.kind === "user_message" && step.agent === "main" && RULESIGHT_COMMAND.test(step.text.trim())
+  );
+  if (index === -1) return { session, excluded: 0 };
+  const steps = session.steps.slice(0, index);
+  const endedAt = steps.findLast((step) => step.at !== null)?.at ?? session.endedAt;
+  return { session: { ...session, steps, endedAt }, excluded: session.steps.length - index };
+}
 function parseTimeBound(flag, text) {
   if (text === void 0) return void 0;
   const ms = Date.parse(text);
@@ -1494,7 +1504,11 @@ var MESSAGES = {
     partial: (count, indexes) => `\u6CE8\u610F\uFF1A\u6709 ${count} \u6BB5\u6CA1\u5224\u6210\uFF08\u7B2C ${indexes} \u6BB5\uFF09\uFF0C\u8FD9\u4EFD\u7ED3\u679C\u4E0D\u5B8C\u6574`,
     cost: (usd, seconds) => `\u5B9E\u9645\u82B1\u8D39 $${usd}\uFF0C\u5404\u6BB5\u7528\u65F6\u5408\u8BA1 ${seconds} \u79D2`,
     verdictsFile: (file) => `\u5224\u5B9A\u6587\u4EF6\uFF1A${file}`,
-    crashed: (detail) => `\u51FA\u9519\u4E86\uFF1A${detail}`
+    crashed: (detail) => `\u51FA\u9519\u4E86\uFF1A${detail}`,
+    excludedSelf: (count) => `\u4E0D\u68C0\u67E5 Rulesight \u81EA\u5DF1\u8FD0\u884C\u7684 ${count} \u6B65\uFF08\u4ECE\u6700\u540E\u4E00\u6B21\u8F93\u5165 /rulesight \u5F00\u59CB\uFF09`,
+    nothingBefore: "\u8FD9\u573A\u4F1A\u8BDD\u5728\u8F93\u5165 /rulesight \u4E4B\u524D\u8FD8\u6CA1\u6709\u53EF\u4EE5\u68C0\u67E5\u7684\u5185\u5BB9\u3002\u5148\u6B63\u5E38\u8BA9 Claude \u505A\u70B9\u4E8B\uFF0C\u518D\u8FD0\u884C /rulesight:rulesight\u3002",
+    outDirFallback: (wanted, used) => `\u62A5\u544A\u76EE\u5F55 ${wanted} \u5199\u4E0D\u8FDB\u53BB\uFF08\u53EF\u80FD\u88AB\u6C99\u76D2\u6321\u4F4F\u4E86\uFF09\uFF0C\u6539\u5B58\u5230 ${used}`,
+    noOutDir: (wanted, detail) => `\u62A5\u544A\u76EE\u5F55 ${wanted} \u548C\u4E34\u65F6\u76EE\u5F55\u90FD\u5199\u4E0D\u8FDB\u53BB\uFF0C\u6CA1\u6709\u5F00\u59CB\u5224\u5B9A\uFF1A${detail}`
   },
   en: {
     usage: `Usage:
@@ -1528,7 +1542,11 @@ var MESSAGES = {
     partial: (count, indexes) => `Note: ${count} segments failed (segment ${indexes}); these results are incomplete`,
     cost: (usd, seconds) => `Actual cost $${usd}, ${seconds} s across segments`,
     verdictsFile: (file) => `Verdicts file: ${file}`,
-    crashed: (detail) => `Something went wrong: ${detail}`
+    crashed: (detail) => `Something went wrong: ${detail}`,
+    excludedSelf: (count) => `Not checking Rulesight's own run: ${count} steps from the last /rulesight on`,
+    nothingBefore: "Nothing in this session to check before /rulesight was typed. Use Claude for something first, then run /rulesight:rulesight.",
+    outDirFallback: (wanted, used) => `Can't write to the report folder ${wanted} (a sandbox may be blocking it); saving to ${used} instead`,
+    noOutDir: (wanted, detail) => `Can't write to the report folder ${wanted} or the temp folder, so judging didn't start: ${detail}`
   }
 };
 function langFlag(argv2) {
@@ -1609,14 +1627,16 @@ async function prepare(argv2, guess, explicit2) {
   const fromMs = bound("from", options.from);
   const toMs = bound("to", options.to);
   const pickLang = explicit2 ? void 0 : (steps) => detectLang({ sessionLang: sessionLang(steps) });
-  let fullSession;
+  let read;
   let lang2;
   try {
-    ({ session: fullSession, lang: lang2 } = await readClaudeCodeSession(options.session, { projectsDir: options.projectsDir, lang: guess, pickLang }));
+    ({ session: read, lang: lang2 } = await readClaudeCodeSession(options.session, { projectsDir: options.projectsDir, lang: guess, pickLang }));
   } catch (error) {
     throw new CliError(MESSAGES[guess].cantRead(error instanceof Error ? error.message : String(error)));
   }
   const m = MESSAGES[lang2];
+  const { session: fullSession, excluded } = beforeLastInvocation(read);
+  if (fullSession.steps.length === 0) throw new CliError(m.nothingBefore);
   const ruleSet = await collectRules(options.cwd ?? fullSession.cwd);
   if (ruleSet.rules.length === 0) {
     const where = ruleSet.files.length > 0 ? m.noRulesIn(ruleSet.files.map((file) => file.displayPath).join(m.list)) : m.noRuleFiles(ruleSet.missing.join(m.list));
@@ -1624,7 +1644,7 @@ async function prepare(argv2, guess, explicit2) {
   }
   try {
     const plan = buildPlan({ fullSession, rules: ruleSet.rules, fromMs, toMs, lang: lang2 });
-    return { lang: lang2, options, fullSession, ruleSet, plan };
+    return { lang: lang2, options, fullSession, excluded, ruleSet, plan };
   } catch (error) {
     throw new CliError(error instanceof Error ? error.message : String(error));
   }
@@ -1632,9 +1652,10 @@ async function prepare(argv2, guess, explicit2) {
 function needsConfirm(plan) {
   return plan.segments.length > CONFIRM_ABOVE_SEGMENTS;
 }
-function printPlan({ fullSession, ruleSet, plan }, m) {
+function printPlan({ fullSession, excluded, ruleSet, plan }, m) {
   const { session, ranged, segments, estimatedCostUsd, estimatedMinutes } = plan;
   console.log(m.sessionLine(session.sessionId, fullSession.steps.length, ranged ? session.steps.length : null));
+  if (excluded > 0) console.log(m.excludedSelf(excluded));
   console.log(m.rulesLine(ruleSet.rules.length, ruleSet.files.map((file) => m.ruleFile(file.displayPath, file.count)).join(m.ruleFileSeparator)));
   if (ruleSet.missing.length > 0) console.log(m.skipped(ruleSet.missing.join(m.list)));
   console.log(m.estimate(segments.length, estimatedCostUsd.toFixed(2), Math.max(1, Math.round(estimatedMinutes))));
@@ -1649,6 +1670,27 @@ async function readTemplate(m) {
     }
   }
   throw new CliError(m.noTemplate);
+}
+async function writableOutDir(wanted, m) {
+  const tryDir = async (dir) => {
+    await mkdir(dir, { recursive: true });
+    const probe = path3.join(dir, `.rulesight-write-check-${process.pid}`);
+    await writeFile(probe, "");
+    await rm(probe, { force: true });
+  };
+  try {
+    await tryDir(wanted);
+    return wanted;
+  } catch (error) {
+    const fallback = path3.join(os3.tmpdir(), "rulesight-reports");
+    try {
+      await tryDir(fallback);
+    } catch {
+      throw new CliError(m.noOutDir(wanted, error instanceof Error ? error.message : String(error)));
+    }
+    console.log(m.outDirFallback(wanted, fallback));
+    return fallback;
+  }
 }
 function defaultOutDir() {
   const data = process.env.CLAUDE_PLUGIN_DATA;
@@ -1668,6 +1710,7 @@ async function runCommand(argv2, guess, explicit2) {
     process.exitCode = EXIT_NEEDS_CONFIRM;
     return;
   }
+  const outDir = await writableOutDir(path3.resolve(options.outDir ?? defaultOutDir()), m);
   const { segments } = plan;
   const verdicts = await judgePlan({
     plan,
@@ -1683,8 +1726,6 @@ async function runCommand(argv2, guess, explicit2) {
   if (failed.length === verdicts.segments.length) {
     throw new CliError(m.allFailed(failed.length, failed[0]?.status === "failed" ? failed[0].error : m.unknown));
   }
-  const outDir = path3.resolve(options.outDir ?? defaultOutDir());
-  await mkdir(outDir, { recursive: true });
   const base = path3.join(outDir, `${fullSession.sessionId}${rangeLabel(options.from, options.to)}`);
   const verdictsFile = `${base}.verdicts.json`;
   const reportFile = `${base}.report.html`;

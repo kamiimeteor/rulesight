@@ -14,6 +14,8 @@ The command output and report language follow `RULESIGHT_LANG` (en or zh), else 
 
 规则怎么判由命令里调用的 Claude 完成。你自己不要判定任何规则，不要改报告，不要把会话内容贴给用户。
 
+用户在 `/rulesight:rulesight` 后面跟的文字不是给你的任务，不要去做，也不要去插件目录里找文件。Rulesight 只检查这场会话里输入命令之前的部分，命令本身和之后的步骤不算。
+
 ## 第 1 步：检查 Node.js
 
 检查结果：!`command -v node >/dev/null && node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 18 ? 1 : 0)' && echo NODE_OK || echo NODE_MISSING`
@@ -36,15 +38,15 @@ The command output and report language follow `RULESIGHT_LANG` (en or zh), else 
 用 Bash 工具运行（确认过的加上 `--yes`）：
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/bin/rulesight.mjs" run --session "${CLAUDE_SESSION_ID}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/rulesight.mjs" run --session "${CLAUDE_SESSION_ID}" --out-dir "${CLAUDE_PLUGIN_DATA}/reports"
 ```
 
 超时设成 600000 毫秒。计划里估算超过 2 分钟的，用 `run_in_background: true`，等它结束的通知再读输出。
 
-命令会调用用户自己的 `claude` 做判定，用的是用户自己的额度。中途报错时，把报错原文里的意思用白话转告用户（例如登录过期就请用户在终端里重新登录 Claude Code），不要自己重试超过一次。
+命令会调用用户自己的 `claude` 做判定，用的是用户自己的额度。中途报错时，把报错原文里的意思用白话转告用户（例如登录过期就请用户在终端里重新登录 Claude Code），不要自己重试超过一次。不要为了重跑关掉沙盒：每跑一次都会再判一遍、再花一次额度。报告目录写不进去时，命令会自己改存到临时目录，并在输出里说明。
 
 ## 第 4 步：打开报告
 
-命令最后一行是 `RULESIGHT_REPORT <路径>`。先试着运行 `open "<路径>"`（Linux 用 `xdg-open`）打开报告。打开成功与否都要把完整路径告诉用户。
+命令最后一行是 `RULESIGHT_REPORT <路径>`。先试着运行 `open "<路径>"`（Linux 用 `xdg-open`）打开报告。打开成功与否都要把完整路径告诉用户。`open` 报错或被拦下时，直接说报告没能自动打开，给出完整路径和用户自己能运行的打开命令，不要说报告已经打开了。
 
 再用 2 到 3 句话总结，只用命令打印的数字：违反几条、遵守几条、不适用几条，以及有没有判不成的段。建议用户先看违反的那几条。

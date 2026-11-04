@@ -40,19 +40,20 @@ export function detectLang(sources: LangSources = {}): Lang {
   return DEFAULT_LANG;
 }
 
-const CODE_OR_URL = /```[\s\S]*?```|`[^`\n]*`|https?:\/\/\S+/g;
+// Code, links, shell commands the user ran (<bash-input> and its output) and a leading slash command are not prose.
+const NOT_PROSE = /```[\s\S]*?```|`[^`\n]*`|https?:\/\/\S+|<(bash-[a-z]+)>[\s\S]*?<\/\1>|^\s*\/[\w:-]+/g;
 const HAN = /\p{Script=Han}/gu;
 const KANA_OR_HANGUL = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const LETTER = /\p{L}/u;
 
-// Counts the user's own messages in the main session: Chinese when at least as many are Chinese as not. Code, links
-// and messages without letters don't vote; Japanese and Korean count as "not Chinese". Undefined when nothing voted.
+// Counts the user's own messages in the main session: Chinese when at least as many are Chinese as not. Messages with
+// no prose letters left (see NOT_PROSE) don't vote; Japanese and Korean count as "not Chinese". Undefined when nothing voted.
 export function sessionLang(steps: readonly Step[]): Lang | undefined {
   let zh = 0;
   let other = 0;
   for (const step of steps) {
     if (step.kind !== "user_message" || step.agent !== "main") continue;
-    const prose = step.text.replace(CODE_OR_URL, " ");
+    const prose = step.text.replace(NOT_PROSE, " ");
     if (!LETTER.test(prose)) continue;
     if ((prose.match(HAN)?.length ?? 0) >= 2 && !KANA_OR_HANGUL.test(prose)) zh += 1;
     else other += 1;

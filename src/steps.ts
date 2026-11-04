@@ -8,6 +8,9 @@ export const COMPACTION_LABELS = {
   en: { compaction: "Context compacted", summary: "Compaction summary" },
 } as const satisfies Record<Lang, { compaction: string; summary: string }>;
 
+// How the plugin's own command shows up as a user message: "/rulesight:rulesight", "/rulesight", with or without text after.
+export const RULESIGHT_COMMAND = /^\/rulesight(?::rulesight)?(?![\w:-])/;
+
 export interface Session {
   formatVersion: 2;
   source: "claude_code";
