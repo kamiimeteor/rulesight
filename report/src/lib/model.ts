@@ -35,6 +35,27 @@ export function evidenceOf(verdict: Verdict): readonly string[] {
   return verdict.verdict === "not_applicable" ? [] : verdict.evidenceSteps;
 }
 
+export interface EvidenceRow {
+  n: string;
+  depth: number;
+  role: "key" | "evidence" | "context";
+}
+
+// The evidence timeline: cited steps plus the steps that started their sub-agents, in session order.
+// A ranged report can cut off a parent step; it still counts toward depth but has no row.
+export function evidenceRows(model: ReportModel, verdict: Verdict): EvidenceRow[] {
+  const evidence = new Set(evidenceOf(verdict));
+  const key = keyStepOf(verdict);
+  const parentsOf = (n: string): string[] => {
+    const parent = model.steps.get(n)?.parentStep ?? null;
+    return parent === null ? [] : [parent, ...parentsOf(parent)];
+  };
+  const shown = new Set([...evidence].flatMap((n) => [n, ...parentsOf(n)]).filter((n) => model.steps.has(n)));
+  return [...shown]
+    .sort((a, b) => (model.stepIndex.get(a) ?? 0) - (model.stepIndex.get(b) ?? 0))
+    .map((n) => ({ n, depth: parentsOf(n).length, role: n === key ? "key" : evidence.has(n) ? "evidence" : "context" }));
+}
+
 export function buildModel(data: ReportData): ReportModel {
   const { session, verdicts: file } = data;
   const stepOrder = session.steps.map((step) => step.n);

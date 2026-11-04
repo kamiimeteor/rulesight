@@ -7,12 +7,13 @@ import type { Feedback, FeedbackMap } from "@/hooks/use-feedback";
 import { downloadText } from "@/lib/download";
 import { fileName } from "@/lib/format";
 import type { Strings } from "@/lib/i18n";
-import { evidenceOf, keyStepOf, ruleOf, stepOf, type ReportModel } from "@/lib/model";
+import { evidenceRows, ruleOf, stepOf, type ReportModel } from "@/lib/model";
 import { TONE } from "@/lib/tone";
 import { cn } from "@/lib/utils";
 import type { Verdict } from "../../../src/verdict.ts";
 
 const SMALL_BUTTON = "h-7 px-2.5 text-[12.5px]";
+const NEST_INDENT_PX = 18;
 
 interface Props {
   model: ReportModel;
@@ -36,8 +37,7 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
   const rule = ruleOf(model, verdict.ruleId);
   const tone = TONE[verdict.verdict];
   const { t } = model;
-  const keyStep = keyStepOf(verdict);
-  const evidence = [...evidenceOf(verdict)].sort((a, b) => (model.stepIndex.get(a) ?? 0) - (model.stepIndex.get(b) ?? 0));
+  const rows = evidenceRows(model, verdict);
 
   return (
     <>
@@ -57,21 +57,22 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
           <div>{verdict.reason}</div>
         </Section>
 
-        {evidence.length > 0 && (
+        {rows.length > 0 && (
           <Section title={t.evidence}>
             <ol className="ml-[5px] border-l pl-4">
-              {evidence.map((n) => {
+              {rows.map(({ n, depth, role }) => {
                 const step = stepOf(model, n);
-                const isKey = n === keyStep;
+                const isKey = role === "key";
                 return (
-                  <li key={n} className="relative mb-3">
+                  <li key={n} className="relative pb-3 last:pb-0" style={{ marginLeft: depth * NEST_INDENT_PX }}>
+                    {depth > 0 && <span className="absolute inset-y-0 -left-[17px] w-px bg-border" />}
                     <span
                       className={cn(
                         "absolute top-1.5 -left-[21px] size-[9px] rounded-full border-[1.5px]",
-                        isKey ? "border-foreground bg-foreground" : "border-ring bg-white",
+                        isKey ? "border-foreground bg-foreground" : role === "evidence" ? "border-ring bg-white" : "border-border bg-white",
                       )}
                     />
-                    <div>
+                    <div className={cn(role === "context" && "text-muted-foreground")}>
                       <span className="font-mono text-xs text-muted-foreground">
                         {t.stepKindSeparator(n, t.stepKind[step.kind])}{" "}
                       </span>
@@ -82,9 +83,8 @@ export function RuleDetail({ model, verdict, feedback, onFeedback, onNext }: Pro
                         </Badge>
                       )}
                     </div>
-                    {isKey ? (
-                      <OriginalText step={step} t={t} />
-                    ) : (
+                    {isKey && <OriginalText step={step} t={t} />}
+                    {role === "evidence" && (
                       <details>
                         <summary className="mt-0.5 cursor-pointer text-[12.5px] text-muted-foreground">{t.showOriginal}</summary>
                         <OriginalText step={step} t={t} />

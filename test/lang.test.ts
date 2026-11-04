@@ -73,7 +73,7 @@ async function fixtureSession(lang: "en" | "zh") {
   return { session, rules };
 }
 
-test("Chinese judge prompt and schema are byte-for-byte what 7a207fa sent", async () => {
+test("Chinese judge prompt and schema match the recorded fixture byte for byte", async () => {
   const expected = JSON.parse(await readFile(path.join(FIXTURE, "expected-zh-prompt.json"), "utf8"));
   const { session, rules } = await fixtureSession("zh");
   const prompt = buildJudgePrompt(session, rules, undefined, "zh");
@@ -85,7 +85,7 @@ test("Chinese judge prompt and schema are byte-for-byte what 7a207fa sent", asyn
 test("English: step summaries, judge prompt and schema ask for English", async () => {
   const { session, rules } = await fixtureSession("en");
   const summaries = session.steps.map((step) => step.summary);
-  assert.ok(summaries.includes("Ran command pnpm test"));
+  assert.ok(summaries.includes("Ran tests · pnpm test"));
   assert.ok(summaries.includes("Read file src/types.ts"));
   assert.ok(summaries.some((s) => s.startsWith("User: Add an optional due date")));
   assert.ok(summaries.every((s) => !/[\u4e00-\u9fff]/.test(s)), "no Chinese left in English summaries");

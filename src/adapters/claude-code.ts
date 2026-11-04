@@ -201,6 +201,13 @@ const LABELS = {
     webFetch: "抓取网页",
     webSearch: "搜索网页",
     todo: "更新待办列表",
+    skill: "使用 skill：",
+    runTests: "运行测试 · ",
+    install: "安装依赖 · ",
+    build: "构建项目 · ",
+    commit: "提交代码 · ",
+    push: "推送代码 · ",
+    remove: "删除文件 · ",
     tool: "调用工具",
     user: "用户消息：",
     agentMessage: "Agent 回复：",
@@ -220,6 +227,13 @@ const LABELS = {
     webFetch: "Fetched page",
     webSearch: "Searched the web",
     todo: "Updated to-do list",
+    skill: "Used skill: ",
+    runTests: "Ran tests · ",
+    install: "Installed dependencies · ",
+    build: "Built project · ",
+    commit: "Committed · ",
+    push: "Pushed · ",
+    remove: "Deleted files · ",
     tool: "Called tool",
     user: "User: ",
     agentMessage: "Agent: ",
@@ -236,6 +250,25 @@ const LABELS = {
 function join(label: string, value: string): string {
   return /[：\s]$/.test(label) ? `${label}${value}` : `${label} ${value}`;
 }
+
+// `cd <dir> &&`, `cd <dir>;` and `VAR=value ` in front of the command a reader cares about.
+const SETUP_PREFIX = /^(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*|[A-Za-z_]\w*=\S*\s+)+/;
+
+// Checked in order against the command left after SETUP_PREFIX. Unmatched commands keep the plain "ran command" label.
+const BASH_ACTIONS: readonly { pattern: RegExp; label: "runTests" | "install" | "build" | "commit" | "push" | "remove" }[] = [
+  {
+    pattern: /^(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|npx\s+(?:vitest|jest)|vitest|jest|pytest|go\s+test|cargo\s+test|(?:flutter|dart)\s+test)(?![\w.-])/,
+    label: "runTests",
+  },
+  {
+    pattern: /^(?:(?:npm|pnpm|yarn|bun)\s+(?:install|add|i)|pip3?\s+install|uv\s+(?:add|pip\s+install)|brew\s+install|(?:flutter|dart)\s+pub\s+(?:get|add))(?![\w.-])/,
+    label: "install",
+  },
+  { pattern: /^(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build|tsc|vite\s+build|cargo\s+build|flutter\s+build)(?![\w.-])/, label: "build" },
+  { pattern: /^git\s+commit(?![\w.-])/, label: "commit" },
+  { pattern: /^git\s+push(?![\w.-])/, label: "push" },
+  { pattern: /^rm(?![\w.-])/, label: "remove" },
+];
 
 const withPath =
   (label: string): Summarizer =>
@@ -256,7 +289,11 @@ function summarizers(lang: Lang): Map<string, Summarizer> {
   return new Map<string, Summarizer>([
     ["Bash", (input) => {
       const command = str(input.command);
-      return command === undefined ? undefined : join(t.bash, clip(command.split("\n")[0] ?? "", 60));
+      if (command === undefined) return undefined;
+      const line = command.split("\n")[0] ?? "";
+      const rest = line.trimStart().replace(SETUP_PREFIX, "");
+      const action = BASH_ACTIONS.find(({ pattern }) => pattern.test(rest));
+      return action === undefined ? join(t.bash, clip(line, 60)) : join(t[action.label], clip(rest, 60));
     }],
     ["Read", withPath(t.read)],
     ["Edit", withPath(t.edit)],
@@ -269,13 +306,22 @@ function summarizers(lang: Lang): Map<string, Summarizer> {
     ["WebFetch", withField(t.webFetch, "url", 80)],
     ["WebSearch", withField(t.webSearch, "query", 60)],
     ["TodoWrite", () => t.todo],
+    ["Skill", withField(t.skill, "skill", 60)],
   ]);
 }
 
 const SUMMARIZERS: Record<Lang, Map<string, Summarizer>> = { zh: summarizers("zh"), en: summarizers("en") };
 
-function summarizeTool(name: string, input: Record<string, unknown>, cwd: string | null, lang: Lang): string {
-  return SUMMARIZERS[lang].get(name)?.(input, cwd) ?? join(LABELS[lang].tool, name);
+// "mcp__notion__notion-search" reads as "notion search · notion". Connector servers are named by an opaque id.
+function summarizeMcp(name: string): string | undefined {
+  const match = /^mcp__(.+?)__(.+)$/.exec(name);
+  if (match === null) return undefined;
+  const [, server = "", tool = ""] = match;
+  return `${tool.replace(/[_-]+/g, " ").trim()} · ${/^[0-9a-f-]{16,}$/i.test(server) ? "MCP" : server}`;
+}
+
+export function summarizeTool(name: string, input: Record<string, unknown>, cwd: string | null, lang: Lang): string {
+  return SUMMARIZERS[lang].get(name)?.(input, cwd) ?? summarizeMcp(name) ?? join(LABELS[lang].tool, name);
 }
 
 // Conversion.
