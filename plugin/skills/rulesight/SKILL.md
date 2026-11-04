@@ -8,9 +8,9 @@ disable-model-invocation: true
 
 用户要检查当前会话有没有遵守自己的规则。你只负责运行下面的命令和转述结果。
 
-命令输出和报告的语言由 `RULESIGHT_LANG`（en 或 zh）或系统语言决定。你转述时用和用户对话的语言，不要给命令加 `--lang`。
+命令输出和报告的语言由 `RULESIGHT_LANG`（en 或 zh）决定，没设时跟着这场会话里用户说的语言，再不行看系统语言。你转述时用和用户对话的语言，不要给命令加 `--lang`。
 
-The command output and report language follow `RULESIGHT_LANG` (en or zh) or the system locale. Relay results in the language the user is talking to you in; don't add `--lang` to the commands.
+The command output and report language follow `RULESIGHT_LANG` (en or zh), else the language the user wrote in during this session, else the system locale. Relay results in the language the user is talking to you in; don't add `--lang` to the commands.
 
 规则怎么判由命令里调用的 Claude 完成。你自己不要判定任何规则，不要改报告，不要把会话内容贴给用户。
 
