@@ -30,7 +30,8 @@ Rulesight 会对照用户给 agent 定的规则（CLAUDE.md、BEHAVIOR.md），�
 - 已完成（续）：会话读取改成自己读 JSONL，长会话能读全（10-29）。
 - 已完成（续）：长会话分段判定（`--from/--to` 判一段时间，超过 10 段先报价，`--yes` 确认），步骤格式第 2 版。
 - 已完成（11-04）：插件 `/rulesight:rulesight` 能跑完 读会话 → 判定 → 报告；语言改成先看会话语言；违反时按原因选修法；本地另一条线的改动合并进来（见 `docs/decisions.md` 2026-11-04）。
-- 下一步：从 GitHub 按 README 在全新环境里装一遍、跑一遍；发布前再确认一次条款（见 2026-10-29）；找非工程师试用。
+- 已完成（11-04）：v0.1 公开发布，GitHub Release `rulesight--v0.1.2`（https://github.com/kamiimeteor/rulesight/releases/tag/rulesight--v0.1.2）。从 GitHub 安装实测通过；条款复查过（见 `docs/decisions.md` 2026-11-04）。
+- 下一步：找 3 到 5 个非工程师试用（社区调研里目标用户没出现）；在没配 GitHub SSH 密钥的电脑上试一次安装。每次发布都要改插件版本号。
 
 ## 产品原则
 
