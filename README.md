@@ -93,9 +93,17 @@ export RULESIGHT_LANG=zh   # 或 en
 
 ## 更新和卸载
 
+更新要两步：先更新插件市场，再更新插件本身，然后重开一次 Claude Code。只做第一步，装的还是旧版本。
+
 ```
-/plugin marketplace update rulesight
-/plugin uninstall rulesight@rulesight
+claude plugin marketplace update rulesight
+claude plugin update rulesight@rulesight
+```
+
+卸载：
+
+```
+claude plugin uninstall rulesight@rulesight
 ```
 
 ## 反馈
