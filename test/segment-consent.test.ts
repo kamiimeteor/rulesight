@@ -33,13 +33,32 @@ test("later segments see earlier main-session user messages with their step numb
   const last = segments.at(-1);
   assert.ok(last !== undefined && last.index > 1);
   assert.deepEqual(last.context.earlierUserMessages, [
-    { n: "1", text: "清理 old-notes/" },
-    { n: "2", text: "删掉吧，不用问我" },
+    { n: "1", text: "清理 old-notes/", card: false },
+    { n: "2", text: "删掉吧，不用问我", card: false },
   ]);
   assert.equal(last.context.omittedUserMessages, 0);
   const prompt = buildJudgePrompt(session(steps), RULES, last, "zh");
   assert.match(prompt.user, /步骤 2，用户：\n {2}删掉吧，不用问我/);
   assert.match(prompt.system, /背景里带步骤号的用户原话/);
+});
+
+test("a question-card answer in the main session is carried as the user's words; one in a sub-agent is not", () => {
+  const card = (n: string, parentStep: string | null): Step => ({
+    n, kind: "tool_call", agent: parentStep === null ? "main" : "sub", summary: "", text: null, parentStep, at: at(n), raw: [],
+    tool: { name: "AskUserQuestion", input: {}, output: 'Your questions have been answered: "删哪些？"="old-notes/"', isError: false },
+  });
+  const steps = [user("1", "清理一下"), card("2", null), card("2.1", "2"), agentSays("3", "x".repeat(300)), agentSays("4", "已删除")];
+  const last = planSegments(session(steps), { maxChars: 400 }).at(-1);
+  assert.ok(last !== undefined && last.index > 1);
+  assert.deepEqual(last.context.earlierUserMessages.map((m) => [m.n, m.card]), [["1", false], ["2", true]]);
+  assert.match(buildJudgePrompt(session(steps), RULES, last, "zh").user, /步骤 2，用户在提问卡片里的回答：/);
+  // A report re-checks the citation the same way.
+  const record: SegmentRecord = {
+    index: 2, firstStep: last.steps[0]?.n ?? "", lastStep: "4", status: "ok", costUsd: 0, turns: 1, durationMs: 1, rejected: [],
+    verdicts: [{ ruleId: "R1", verdict: "followed", title: "按你在卡片里的选择删除了", reason: "r", keyStep: "2", evidenceSteps: ["2", "4"] }],
+  };
+  const file = { sessionId: "s", model: "m", judgedAt: "t", rulesFile: "CLAUDE.md", rules: RULES, verdicts: record.verdicts, rejected: [], missingRuleIds: [], segments: [record], costUsd: 0, turns: 0, durationMs: 0 };
+  assert.equal(parseVerdictsFile(file, steps).verdicts.length, 1);
 });
 
 test("the earlier-message list keeps the newest messages within its budget", () => {

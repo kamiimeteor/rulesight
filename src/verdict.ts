@@ -1,6 +1,6 @@
 import { parseLang, type Lang } from "./lang.ts";
 import type { Rule } from "./rules.ts";
-import { isRecord, type Step } from "./steps.ts";
+import { isRecord, userWords, type Step } from "./steps.ts";
 
 export const VERDICT_KINDS = ["followed", "violated", "not_applicable"] as const;
 export type VerdictKind = (typeof VERDICT_KINDS)[number];
@@ -322,7 +322,7 @@ function parseSegmentRecord(raw: unknown, rules: readonly Rule[], steps: readonl
   const first = stepIndex.get(firstStep);
   const last = stepIndex.get(lastStep);
   if (first === undefined || last === undefined || first > last) throw new Error(`${label}的步骤范围 ${firstStep}–${lastStep} 在步骤文件里对不上`);
-  const earlierUserMessages = steps.slice(0, first).filter((step) => step.parentStep === null && step.kind === "user_message");
+  const earlierUserMessages = steps.slice(0, first).filter((step) => userWords(step) !== null);
   const checked = validateVerdicts({ verdicts }, rules, steps.slice(first, last + 1), earlierUserMessages);
   if (checked.rejected.length > 0) {
     const detail = checked.rejected.map((entry) => `${entry.ruleId ?? "?"}：${entry.reason}`).join("；");

@@ -1,6 +1,6 @@
 import { clip, formatStep, STEP_SEPARATOR } from "./judge.ts";
 import type { Lang } from "./lang.ts";
-import { COMPACTION_LABELS, type Session, type Step } from "./steps.ts";
+import { COMPACTION_LABELS, userWords, type Session, type Step } from "./steps.ts";
 
 export const DEFAULT_MAX_SEGMENT_CHARS = 200_000;
 
@@ -21,7 +21,7 @@ export interface SegmentPosition {
 export interface SegmentContext {
   // Text of the latest compaction summary before this segment.
   summary: string | null;
-  // Main-session user messages before this segment, oldest first, with their step numbers.
+  // The user's words before this segment (main-session messages and question-card answers), oldest first, with their step numbers.
   // The only part of the background the judge may cite, and only for consent or its withdrawal.
   earlierUserMessages: EarlierUserMessage[];
   // Earlier user messages left out to stay within the budget.
@@ -32,6 +32,8 @@ export interface SegmentContext {
 export interface EarlierUserMessage {
   n: string;
   text: string;
+  // An answer picked or typed in a question card rather than a typed message.
+  card: boolean;
 }
 
 export interface Segment {
@@ -129,7 +131,8 @@ export function planSegments(
     for (const step of steps) {
       if (step.parentStep !== null) continue;
       if (step.kind === "system" && COMPACTION_SUMMARIES.has(step.summary)) summary = step.text;
-      else if (step.kind === "user_message") earlier.push({ n: step.n, text: clip(step.text, EARLIER_USER_MESSAGE_CHARS, lang) });
+      const words = userWords(step);
+      if (words !== null) earlier.push({ n: step.n, text: clip(words.text, EARLIER_USER_MESSAGE_CHARS, lang), card: words.card });
     }
   };
   // A ranged run still needs what came before the range, or the first segment judges without the backstory.

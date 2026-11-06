@@ -56,6 +56,17 @@ export const SESSION_FIELDS = ["formatVersion", "source", "sessionId", "title", 
 export const STEP_FIELDS = ["n", "kind", "agent", "summary", "text", "tool", "parentStep", "at", "raw"] as const;
 export const TOOL_FIELDS = ["name", "input", "output", "isError"] as const;
 
+// What the user picked or typed in a question card. The tool's output is written by Claude Code from the user's answer, not by the agent.
+export const ASK_USER_TOOL = "AskUserQuestion";
+
+// The user's own words in the main session: a message, or the answer to a question card. Null for anything else.
+export function userWords(step: Step): { text: string; card: boolean } | null {
+  if (step.parentStep !== null) return null;
+  if (step.kind === "user_message") return { text: step.text, card: false };
+  if (step.kind === "tool_call" && step.tool.name === ASK_USER_TOOL && step.tool.output !== null) return { text: step.tool.output, card: true };
+  return null;
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
