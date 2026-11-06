@@ -32,7 +32,8 @@ Rulesight 会对照用户给 agent 定的规则（CLAUDE.md、BEHAVIOR.md），�
 - 已完成（11-04）：插件 `/rulesight:rulesight` 能跑完 读会话 → 判定 → 报告；语言改成先看会话语言；违反时按原因选修法；本地另一条线的改动合并进来（见 `docs/decisions.md` 2026-11-04）。
 - 已完成（11-04）：v0.1 公开发布，GitHub Release `rulesight--v0.1.2`（https://github.com/kamiimeteor/rulesight/releases/tag/rulesight--v0.1.2）。从 GitHub 安装实测通过；条款复查过（见 `docs/decisions.md` 2026-11-04）。
 - 已完成（11-06）：README 写明三个已知限制（分不出没加载和被忽略、只看会话记录不看磁盘、长会话分段）；分段判定时前面几段里用户亲口说的话可以跨段当同意的证据，插件 0.1.4；选项卡片里的回答也算用户本人的话，插件 0.1.5；规则跟着 `@` 引用读、也读 rules 目录，可以用 `~/.rulesight/skip.txt` 跳过文件，插件 0.1.6（见 `docs/decisions.md` 2026-11-06）。
-- 下一步：找 3 到 5 个非工程师试用（社区调研里目标用户没出现）；在没配 GitHub SSH 密钥的电脑上试一次安装。每次发布都要改插件版本号。
+- 已完成（11-06）：模拟没有 GitHub SSH 密钥的环境安装：市场用 SSH 拉取失败后，Claude Code 会自动改用 HTTPS，添加、安装、更新都成功，README 不用改。
+- 下一步：找 3 到 5 个非工程师试用（社区调研里目标用户没出现）。每次发布都要改插件版本号。
 
 ## 产品原则
 
