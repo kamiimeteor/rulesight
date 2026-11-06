@@ -606,11 +606,6 @@ function sessionLang(steps) {
   return zh >= other ? "zh" : "en";
 }
 
-// src/pipeline.ts
-import { readFile as readFile2 } from "node:fs/promises";
-import os2 from "node:os";
-import path2 from "node:path";
-
 // src/judge.ts
 import { spawn } from "node:child_process";
 
@@ -1150,10 +1145,16 @@ async function runSegments(options) {
   });
 }
 
+// src/rule-files.ts
+import { readdir as readdir2, readFile as readFile2, realpath, stat as stat2 } from "node:fs/promises";
+import os2 from "node:os";
+import path2 from "node:path";
+
 // src/rules.ts
 var HEADING = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/;
 var LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/;
 var FENCE = /^\s*(`{3,}|~{3,})/;
+var IMPORTS_ONLY = /^\s*@(?:\\ |\S)+(?:\s+@(?:\\ |\S)+)*\s*$/;
 var TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 function splitCells(line) {
   return line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "").split(/(?<!\\)\|/).map((cell) => cell.replace(/\\\|/g, "|").trim());
@@ -1223,6 +1224,10 @@ function parseRules(markdown, displayPath3) {
       drafts.push(item);
       continue;
     }
+    if (IMPORTS_ONLY.test(line)) {
+      item = null;
+      continue;
+    }
     if (item !== null) {
       item.text = `${item.text} ${line.trim()}`.trim();
     } else {
@@ -1235,6 +1240,155 @@ function parseRules(markdown, displayPath3) {
     source: { file: displayPath3, line: draft.line },
     section: draft.section
   }));
+}
+
+// src/rule-files.ts
+var MAX_IMPORT_HOPS = 4;
+var SKIP_FILE = path2.join(".rulesight", "skip.txt");
+var SCOPE_LABEL = {
+  zh: (paths) => `\u53EA\u5728\u5904\u7406 ${paths.join("\u3001")} \u65F6\u751F\u6548`,
+  en: (paths) => `Only applies when working on ${paths.join(", ")}`
+};
+function displayPath2(file) {
+  const home = os2.homedir();
+  return file === home || file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file;
+}
+function expandHome(file) {
+  return file === "~" || file.startsWith("~/") ? path2.join(os2.homedir(), file.slice(1)) : file;
+}
+async function readIfExists(file) {
+  try {
+    return await readFile2(file, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EISDIR")) return null;
+    throw error;
+  }
+}
+function splitFrontmatter(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return { body: markdown, paths: [] };
+  const end = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
+  if (end === -1) return { body: markdown, paths: [] };
+  const paths = [];
+  const unquote = (text) => text.trim().replace(/^["']|["']$/g, "");
+  let inPaths = false;
+  for (const line of lines.slice(1, end)) {
+    const key = /^(\w+):\s*(.*)$/.exec(line);
+    if (key !== null) {
+      inPaths = key[1] === "paths";
+      const inline = (key[2] ?? "").trim();
+      if (inPaths && inline.startsWith("[")) paths.push(...inline.replace(/^\[|\]$/g, "").split(",").map(unquote).filter((p) => p !== ""));
+      else if (inPaths && inline !== "") paths.push(unquote(inline));
+      continue;
+    }
+    const item = /^\s*-\s*(.+)$/.exec(line);
+    if (inPaths && item !== null) paths.push(unquote(item[1] ?? ""));
+  }
+  const body = [...lines.slice(0, end + 1).map(() => ""), ...lines.slice(end + 1)].join("\n");
+  return { body, paths };
+}
+function findImports(markdown) {
+  const found = [];
+  let fence = null;
+  for (const line of markdown.split(/\r?\n/)) {
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence !== null) {
+      if (marker !== void 0 && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      continue;
+    }
+    if (marker !== void 0) {
+      fence = marker;
+      continue;
+    }
+    const prose = line.replace(/(`+)[\s\S]*?\1/g, " ");
+    for (const match of prose.matchAll(/(?:^|\s)@((?:\\ |[^\s"'`])+)/g)) found.push((match[1] ?? "").replace(/\\ /g, " "));
+  }
+  return found;
+}
+async function rulesFolder(dir, seen = /* @__PURE__ */ new Set()) {
+  let real;
+  try {
+    real = await realpath(dir);
+  } catch {
+    return [];
+  }
+  if (seen.has(real)) return [];
+  seen.add(real);
+  let names;
+  try {
+    names = (await readdir2(dir)).sort();
+  } catch {
+    return [];
+  }
+  const files = [];
+  for (const name of names) {
+    const full = path2.join(dir, name);
+    const info = await stat2(full).catch(() => null);
+    if (info?.isDirectory()) files.push(...await rulesFolder(full, seen));
+    else if (info?.isFile() && name.endsWith(".md")) files.push(full);
+  }
+  return files;
+}
+async function readSkipList() {
+  const text = await readIfExists(path2.join(os2.homedir(), SKIP_FILE));
+  const skip = /* @__PURE__ */ new Set();
+  for (const raw of (text ?? "").split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (line === "") continue;
+    const file = path2.resolve(expandHome(line));
+    skip.add(file);
+    skip.add(await realpath(file).catch(() => file));
+  }
+  return skip;
+}
+async function collectRules(cwd, lang2 = "zh") {
+  const home = os2.homedir();
+  const project = cwd === null ? null : path2.resolve(cwd);
+  const required = [path2.join(home, ".claude", "CLAUDE.md"), ...project === null ? [] : [path2.join(project, "CLAUDE.md")]];
+  const roots = [
+    path2.join(home, ".claude", "CLAUDE.md"),
+    ...await rulesFolder(path2.join(home, ".claude", "rules")),
+    ...project === null ? [] : [
+      path2.join(project, "CLAUDE.md"),
+      path2.join(project, ".claude", "CLAUDE.md"),
+      path2.join(project, "CLAUDE.local.md"),
+      ...await rulesFolder(path2.join(project, ".claude", "rules"))
+    ]
+  ];
+  const skip = await readSkipList();
+  const set = { rules: [], files: [], missing: [], skipped: [], brokenImports: [] };
+  const visited = /* @__PURE__ */ new Set();
+  const visit = async (file, hops, importedFrom) => {
+    const real = await realpath(file).catch(() => file);
+    if (visited.has(real)) return;
+    visited.add(real);
+    const markdown = await readIfExists(file);
+    if (markdown === null) {
+      if (importedFrom !== null) set.brokenImports.push(displayPath2(file));
+      else if (required.includes(file)) set.missing.push(displayPath2(file));
+      return;
+    }
+    const { body, paths } = splitFrontmatter(markdown);
+    const parsed = parseRules(body, displayPath2(file));
+    if (skip.has(file) || skip.has(real)) {
+      set.skipped.push({ displayPath: displayPath2(file), count: parsed.length });
+      return;
+    }
+    set.files.push({ displayPath: displayPath2(file), count: parsed.length });
+    const scope = paths.length === 0 ? null : SCOPE_LABEL[lang2](paths);
+    for (const rule of parsed) {
+      const section = scope === null ? rule.section : rule.section === "" ? scope : `${scope} > ${rule.section}`;
+      set.rules.push({ ...rule, id: `R${set.rules.length + 1}`, section });
+    }
+    if (hops >= MAX_IMPORT_HOPS) return;
+    for (const target of findImports(body)) {
+      const resolved = path2.resolve(path2.dirname(file), expandHome(target));
+      if (await stat2(resolved).catch(() => null) === null && !/[./]/.test(target)) continue;
+      await visit(resolved, hops + 1, file);
+    }
+  };
+  for (const root of roots) await visit(root, 0, null);
+  return set;
 }
 
 // src/segment.ts
@@ -1366,10 +1520,6 @@ var USD_PER_MILLION_CHARS = 3;
 var SECONDS_PER_SEGMENT = 60;
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-function displayPath2(file) {
-  const home = os2.homedir();
-  return file === home || file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file;
-}
 function beforeLastInvocation(session) {
   const index = session.steps.findLastIndex(
     (step) => step.kind === "user_message" && step.agent === "main" && RULESIGHT_COMMAND.test(step.text.trim())
@@ -1388,31 +1538,6 @@ function parseTimeBound(flag, text) {
 function rangeLabel(from, to) {
   if (from === void 0 && to === void 0) return "";
   return `.${[from ?? "begin", to ?? "end"].map((text) => text.replace(/[^0-9A-Za-z-]/g, "-")).join("_")}`;
-}
-async function readIfExists(file) {
-  try {
-    return await readFile2(file, "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EISDIR")) return null;
-    throw error;
-  }
-}
-async function collectRules(cwd) {
-  const candidates = [path2.join(os2.homedir(), ".claude", "CLAUDE.md"), ...cwd === null ? [] : [path2.join(path2.resolve(cwd), "CLAUDE.md")]];
-  const rules = [];
-  const files = [];
-  const missing = [];
-  for (const file of [...new Set(candidates)]) {
-    const markdown = await readIfExists(file);
-    if (markdown === null) {
-      missing.push(displayPath2(file));
-      continue;
-    }
-    const parsed = parseRules(markdown, displayPath2(file));
-    files.push({ displayPath: displayPath2(file), count: parsed.length });
-    for (const rule of parsed) rules.push({ ...rule, id: `R${rules.length + 1}` });
-  }
-  return { rules, files, missing };
 }
 function buildPlan(input) {
   const { fullSession, rules, fromMs, toMs, maxChars = DEFAULT_MAX_SEGMENT_CHARS, lang: lang2 = "zh" } = input;
@@ -1526,6 +1651,8 @@ var MESSAGES = {
     ruleFile: (file, count) => `${file}\uFF08${count} \u6761\uFF09`,
     ruleFileSeparator: "\uFF1B",
     skipped: (files) => `\u6CA1\u627E\u5230\u3001\u5DF2\u8DF3\u8FC7\uFF1A${files}`,
+    skippedBySetting: (files) => `\u6309 ~/.rulesight/skip.txt \u6CA1\u6709\u68C0\u67E5\uFF1A${files}`,
+    brokenImports: (files) => `\u89C4\u5219\u91CC @ \u5F15\u7528\u7684\u6587\u4EF6\u627E\u4E0D\u5230\uFF1A${files}`,
     estimate: (segments, usd, minutes) => `\u8981\u5206 ${segments} \u6BB5\u5224\u5B9A\uFF0C\u4F30\u7B97\u8D39\u7528\u7EA6 $${usd}\uFF0C\u7528\u65F6\u7EA6 ${minutes} \u5206\u949F\uFF08\u8D39\u7528\u6309\u63A5\u53E3\u4EF7\u683C\u6298\u7B97\uFF0C\u5B9E\u9645\u8D70\u4F60\u81EA\u5DF1\u7684 Claude \u989D\u5EA6\uFF09`,
     noTemplate: "\u627E\u4E0D\u5230\u62A5\u544A\u6A21\u677F\uFF08assets/report-template.html\uFF09\u3002\u63D2\u4EF6\u6587\u4EF6\u4E0D\u5B8C\u6574\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u3002",
     needsConfirm: (limit) => `\u9700\u8981\u786E\u8BA4\uFF1A\u8D85\u8FC7 ${limit} \u6BB5\uFF0C\u8981\u7528\u8F83\u591A\u989D\u5EA6\u548C\u65F6\u95F4\u3002\u786E\u8BA4\u540E\u52A0 --yes \u518D\u8FD0\u884C\u3002`,
@@ -1564,6 +1691,8 @@ var MESSAGES = {
     ruleFile: (file, count) => `${file} (${count})`,
     ruleFileSeparator: "; ",
     skipped: (files) => `Not found, skipped: ${files}`,
+    skippedBySetting: (files) => `Not checked, listed in ~/.rulesight/skip.txt: ${files}`,
+    brokenImports: (files) => `Files @imported by your rules that aren't there: ${files}`,
     estimate: (segments, usd, minutes) => `Judging in ${segments} segment${segments === 1 ? "" : "s"}, estimated cost about $${usd}, about ${minutes} min (cost at API prices; it actually uses your own Claude plan)`,
     noTemplate: "Can't find the report template (assets/report-template.html). The plugin files are incomplete; please reinstall.",
     needsConfirm: (limit) => `Confirmation needed: more than ${limit} segments uses a lot of quota and time. Run again with --yes to go ahead.`,
@@ -1673,7 +1802,7 @@ async function prepare(argv2, guess, explicit2) {
   const m = MESSAGES[lang2];
   const { session: fullSession, excluded } = beforeLastInvocation(read);
   if (fullSession.steps.length === 0) throw new CliError(m.nothingBefore);
-  const ruleSet = await collectRules(options.cwd ?? fullSession.cwd);
+  const ruleSet = await collectRules(options.cwd ?? fullSession.cwd, lang2);
   if (ruleSet.rules.length === 0) {
     const where = ruleSet.files.length > 0 ? m.noRulesIn(ruleSet.files.map((file) => file.displayPath).join(m.list)) : m.noRuleFiles(ruleSet.missing.join(m.list));
     throw new CliError(m.writeRules(where));
@@ -1694,6 +1823,8 @@ function printPlan({ fullSession, excluded, ruleSet, plan }, m) {
   if (excluded > 0) console.log(m.excludedSelf(excluded));
   console.log(m.rulesLine(ruleSet.rules.length, ruleSet.files.map((file) => m.ruleFile(file.displayPath, file.count)).join(m.ruleFileSeparator)));
   if (ruleSet.missing.length > 0) console.log(m.skipped(ruleSet.missing.join(m.list)));
+  if (ruleSet.skipped.length > 0) console.log(m.skippedBySetting(ruleSet.skipped.map((file) => m.ruleFile(file.displayPath, file.count)).join(m.ruleFileSeparator)));
+  if (ruleSet.brokenImports.length > 0) console.log(m.brokenImports(ruleSet.brokenImports.join(m.list)));
   console.log(m.estimate(segments.length, estimatedCostUsd.toFixed(2), Math.max(1, Math.round(estimatedMinutes))));
   console.log(`RULESIGHT_PLAN ${JSON.stringify({ segments: segments.length, needsConfirm: needsConfirm(plan) })}`);
 }

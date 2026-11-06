@@ -1,9 +1,7 @@
-import { readFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { buildJudgePrompt, runSegments } from "./judge.ts";
 import type { Lang } from "./lang.ts";
-import { parseRules, type Rule } from "./rules.ts";
+import type { Rule } from "./rules.ts";
+export { collectRules, displayPath, type RuleFile, type RuleSet } from "./rule-files.ts";
 import { DEFAULT_MAX_SEGMENT_CHARS, planSegments, sliceByTime, type Segment } from "./segment.ts";
 import { RULESIGHT_COMMAND, type Session } from "./steps.ts";
 import { mergeSegmentVerdicts, type Rejection, type SegmentRecord, type VerdictsFile } from "./verdict.ts";
@@ -14,11 +12,6 @@ const USD_PER_MILLION_CHARS = 3;
 const SECONDS_PER_SEGMENT = 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-
-export function displayPath(file: string): string {
-  const home = os.homedir();
-  return file === home || file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file;
-}
 
 // The last /rulesight and everything after it (the plan, the judging, retries) is Rulesight's own run, not the work
 // being checked, so it is cut off. Earlier runs in the same session stay: they happened before this check.
@@ -50,46 +43,6 @@ export function parseMaxChars(text: string | undefined): number {
 export function rangeLabel(from: string | undefined, to: string | undefined): string {
   if (from === undefined && to === undefined) return "";
   return `.${[from ?? "begin", to ?? "end"].map((text) => text.replace(/[^0-9A-Za-z-]/g, "-")).join("_")}`;
-}
-
-export interface RuleFile {
-  displayPath: string;
-  count: number;
-}
-
-export interface RuleSet {
-  rules: Rule[];
-  files: RuleFile[];
-  // Rule files that were looked for and not there, for the plan to mention.
-  missing: string[];
-}
-
-async function readIfExists(file: string): Promise<string | null> {
-  try {
-    return await readFile(file, "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EISDIR")) return null;
-    throw error;
-  }
-}
-
-// v0.1 reads the user's global CLAUDE.md and the session project's CLAUDE.md. Ids run on across files (R1, R2, ...).
-export async function collectRules(cwd: string | null): Promise<RuleSet> {
-  const candidates = [path.join(os.homedir(), ".claude", "CLAUDE.md"), ...(cwd === null ? [] : [path.join(path.resolve(cwd), "CLAUDE.md")])];
-  const rules: Rule[] = [];
-  const files: RuleFile[] = [];
-  const missing: string[] = [];
-  for (const file of [...new Set(candidates)]) {
-    const markdown = await readIfExists(file);
-    if (markdown === null) {
-      missing.push(displayPath(file));
-      continue;
-    }
-    const parsed = parseRules(markdown, displayPath(file));
-    files.push({ displayPath: displayPath(file), count: parsed.length });
-    for (const rule of parsed) rules.push({ ...rule, id: `R${rules.length + 1}` });
-  }
-  return { rules, files, missing };
 }
 
 export interface Plan {

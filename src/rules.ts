@@ -14,6 +14,7 @@ interface Draft {
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/;
 const FENCE = /^\s*(`{3,}|~{3,})/;
+const IMPORTS_ONLY = /^\s*@(?:\\ |\S)+(?:\s+@(?:\\ |\S)+)*\s*$/;
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 
 function splitCells(line: string): string[] {
@@ -99,6 +100,12 @@ export function parseRules(markdown: string, displayPath: string): Rule[] {
       const text = (listItem[1] ?? "").trim();
       item = { text: lead === null ? text : `${lead} ${text}`, line: lineNo, section: section() };
       drafts.push(item);
+      continue;
+    }
+
+    // A line of nothing but @imports pulls in another file; it is not part of the rule above it.
+    if (IMPORTS_ONLY.test(line)) {
+      item = null;
       continue;
     }
 

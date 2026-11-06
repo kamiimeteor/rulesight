@@ -31,6 +31,8 @@ const MESSAGES = {
     ruleFile: (file: string, count: number) => `${file}（${count} 条）`,
     ruleFileSeparator: "；",
     skipped: (files: string) => `没找到、已跳过：${files}`,
+    skippedBySetting: (files: string) => `按 ~/.rulesight/skip.txt 没有检查：${files}`,
+    brokenImports: (files: string) => `规则里 @ 引用的文件找不到：${files}`,
     estimate: (segments: number, usd: string, minutes: number) =>
       `要分 ${segments} 段判定，估算费用约 $${usd}，用时约 ${minutes} 分钟（费用按接口价格折算，实际走你自己的 Claude 额度）`,
     noTemplate: "找不到报告模板（assets/report-template.html）。插件文件不完整，请重新安装。",
@@ -70,6 +72,8 @@ const MESSAGES = {
     ruleFile: (file: string, count: number) => `${file} (${count})`,
     ruleFileSeparator: "; ",
     skipped: (files: string) => `Not found, skipped: ${files}`,
+    skippedBySetting: (files: string) => `Not checked, listed in ~/.rulesight/skip.txt: ${files}`,
+    brokenImports: (files: string) => `Files @imported by your rules that aren't there: ${files}`,
     estimate: (segments: number, usd: string, minutes: number) =>
       `Judging in ${segments} segment${segments === 1 ? "" : "s"}, estimated cost about $${usd}, about ${minutes} min (cost at API prices; it actually uses your own Claude plan)`,
     noTemplate: "Can't find the report template (assets/report-template.html). The plugin files are incomplete; please reinstall.",
@@ -215,7 +219,7 @@ async function prepare(argv: readonly string[], guess: Lang, explicit: boolean):
   const { session: fullSession, excluded } = beforeLastInvocation(read);
   if (fullSession.steps.length === 0) throw new CliError(m.nothingBefore);
   // The session's own project, not the folder this process happens to run in.
-  const ruleSet = await collectRules(options.cwd ?? fullSession.cwd);
+  const ruleSet = await collectRules(options.cwd ?? fullSession.cwd, lang);
   if (ruleSet.rules.length === 0) {
     const where =
       ruleSet.files.length > 0 ? m.noRulesIn(ruleSet.files.map((file) => file.displayPath).join(m.list)) : m.noRuleFiles(ruleSet.missing.join(m.list));
@@ -239,6 +243,8 @@ function printPlan({ fullSession, excluded, ruleSet, plan }: Prepared, m: Messag
   if (excluded > 0) console.log(m.excludedSelf(excluded));
   console.log(m.rulesLine(ruleSet.rules.length, ruleSet.files.map((file) => m.ruleFile(file.displayPath, file.count)).join(m.ruleFileSeparator)));
   if (ruleSet.missing.length > 0) console.log(m.skipped(ruleSet.missing.join(m.list)));
+  if (ruleSet.skipped.length > 0) console.log(m.skippedBySetting(ruleSet.skipped.map((file) => m.ruleFile(file.displayPath, file.count)).join(m.ruleFileSeparator)));
+  if (ruleSet.brokenImports.length > 0) console.log(m.brokenImports(ruleSet.brokenImports.join(m.list)));
   console.log(m.estimate(segments.length, estimatedCostUsd.toFixed(2), Math.max(1, Math.round(estimatedMinutes))));
   console.log(`RULESIGHT_PLAN ${JSON.stringify({ segments: segments.length, needsConfirm: needsConfirm(plan) })}`);
 }

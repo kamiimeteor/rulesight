@@ -28,7 +28,7 @@ The command output and report language follow `RULESIGHT_LANG` (en or zh), else 
 
 如果输出里没有 `RULESIGHT_PLAN` 这一行，说明没能做出计划。把输出里的报错用白话告诉用户，然后停下。
 
-否则用 2 到 3 句白话告诉用户：对照了多少条规则、来自哪些文件，会切成几段、大约花多少钱和多久。
+否则用 2 到 3 句白话告诉用户：对照了多少条规则、来自哪些文件，会切成几段、大约花多少钱和多久。计划里如果写了按 `~/.rulesight/skip.txt` 没有检查的文件，或者 `@` 引用的文件找不到，也告诉用户。
 
 - `needsConfirm` 是 true：把估算的费用和用时告诉用户，问用户要不要继续，等用户明确说“要”之后再运行。没有明确同意，不要运行。
 - `needsConfirm` 是 false：直接运行。
