@@ -1,6 +1,6 @@
 # 报告页结构
 
-第 2 版，2026-10-28 用真实会话看过后定稿。实现在 `report/`（React + shadcn/ui），以代码为准；最早的样稿：https://claude.ai/artifact/XLgfveCFYuoEhBg1Cj3kj1
+第 2 版，2026-10-28 用真实会话看过后定稿。实现在 `report/`（React + shadcn/ui），以代码为准。
 
 一次会话生成一页报告，是一个离线就能打开的 HTML 文件。从上到下：
 
