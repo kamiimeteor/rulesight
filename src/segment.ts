@@ -6,8 +6,9 @@ export const DEFAULT_MAX_SEGMENT_CHARS = 200_000;
 
 const COMPACTIONS: ReadonlySet<string> = new Set(Object.values(COMPACTION_LABELS).map((labels) => labels.compaction));
 const COMPACTION_SUMMARIES: ReadonlySet<string> = new Set(Object.values(COMPACTION_LABELS).map((labels) => labels.summary));
-const RECENT_USER_MESSAGES = 5;
-const RECENT_USER_MESSAGE_CHARS = 500;
+// Each earlier user message is clipped, and the list keeps the newest ones that fit the budget.
+const EARLIER_USER_MESSAGE_CHARS = 500;
+const EARLIER_USER_MESSAGES_BUDGET = 20_000;
 
 export interface SegmentPosition {
   // 1-based.
@@ -20,9 +21,17 @@ export interface SegmentPosition {
 export interface SegmentContext {
   // Text of the latest compaction summary before this segment.
   summary: string | null;
-  // The last main-session user messages before this segment, oldest first.
-  recentUserMessages: string[];
+  // Main-session user messages before this segment, oldest first, with their step numbers.
+  // The only part of the background the judge may cite, and only for consent or its withdrawal.
+  earlierUserMessages: EarlierUserMessage[];
+  // Earlier user messages left out to stay within the budget.
+  omittedUserMessages: number;
   position: SegmentPosition;
+}
+
+export interface EarlierUserMessage {
+  n: string;
+  text: string;
 }
 
 export interface Segment {
@@ -115,12 +124,12 @@ export function planSegments(
   const groups = splitUnits(toUnits(session.steps, maxChars, lang), maxChars).map((group) => group.flatMap((unit) => unit.steps));
 
   let summary: string | null = null;
-  let recent: string[] = [];
+  const earlier: EarlierUserMessage[] = [];
   const remember = (steps: readonly Step[]) => {
     for (const step of steps) {
       if (step.parentStep !== null) continue;
       if (step.kind === "system" && COMPACTION_SUMMARIES.has(step.summary)) summary = step.text;
-      else if (step.kind === "user_message") recent = [...recent, step.text].slice(-RECENT_USER_MESSAGES);
+      else if (step.kind === "user_message") earlier.push({ n: step.n, text: clip(step.text, EARLIER_USER_MESSAGE_CHARS, lang) });
     }
   };
   // A ranged run still needs what came before the range, or the first segment judges without the backstory.
@@ -129,18 +138,32 @@ export function planSegments(
     const first = steps[0];
     const last = steps.at(-1);
     if (first === undefined || last === undefined) throw new Error("切段切出了空的一段");
+    const kept = newestWithin(earlier, EARLIER_USER_MESSAGES_BUDGET);
     const segment: Segment = {
       index: i + 1,
       steps,
       context: {
         summary,
-        recentUserMessages: recent.map((text) => clip(text, RECENT_USER_MESSAGE_CHARS, lang)),
+        earlierUserMessages: kept,
+        omittedUserMessages: earlier.length - kept.length,
         position: { index: i + 1, total: groups.length, firstStep: first.n, lastStep: last.n },
       },
     };
     remember(steps);
     return segment;
   });
+}
+
+function newestWithin(messages: readonly EarlierUserMessage[], budget: number): EarlierUserMessage[] {
+  let used = 0;
+  let start = messages.length;
+  while (start > 0) {
+    const chars = Array.from(messages[start - 1]?.text ?? "").length;
+    if (used + chars > budget) break;
+    used += chars;
+    start--;
+  }
+  return messages.slice(start);
 }
 
 // Keeps the main steps whose `at` is in range, with their sub-steps. A main step without a time cannot be placed, so it is dropped.

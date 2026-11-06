@@ -27,14 +27,15 @@ export function slimForReport(data: ReportData): ReportData {
   const from = first === undefined ? 0 : (index.get(first.firstStep) ?? 0);
   const to = last === undefined ? session.steps.length - 1 : (index.get(last.lastStep) ?? session.steps.length - 1);
   const cited = new Set(verdicts.verdicts.flatMap((verdict) => (verdict.verdict === "not_applicable" ? [] : verdict.evidenceSteps)));
-  const steps = session.steps.slice(from, to + 1).map((step) => {
+  // A ranged run can cite a user message from before the range (consent given on an earlier day), so cited steps are always kept.
+  const steps = session.steps.filter((step, i) => (i >= from && i <= to) || cited.has(step.n)).map((step) => {
     if (cited.has(step.n)) return step;
     return step.kind === "tool_call"
       ? { ...step, tool: { name: step.tool.name, input: {}, output: null, isError: step.tool.isError }, raw: [] }
       : { ...step, text: "", raw: [] };
   });
-  // A ranged run covers only part of the session, so the header's start time and duration follow the kept steps.
-  const times = steps.map((step) => step.at).filter((at): at is string => at !== null);
+  // A ranged run covers only part of the session, so the header's start time and duration follow the steps in range.
+  const times = session.steps.slice(from, to + 1).map((step) => step.at).filter((at): at is string => at !== null);
   const startedAt = from === 0 ? session.startedAt : (times[0] ?? session.startedAt);
   const endedAt = to === session.steps.length - 1 ? session.endedAt : (times.at(-1) ?? session.endedAt);
   return { session: { ...session, steps, startedAt, endedAt }, verdicts };

@@ -148,7 +148,8 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
 }
 
-function parseVerdict(entry: Record<string, unknown>, ruleId: string, stepNs: ReadonlySet<string>): Parsed {
+// earlierNs: user messages from before the segment, citable only alongside evidence from the segment itself.
+function parseVerdict(entry: Record<string, unknown>, ruleId: string, stepNs: ReadonlySet<string>, earlierNs: ReadonlySet<string>): Parsed {
   const fail = (reason: string): Parsed => ({ ok: false, reason });
   const { verdict, title, reason } = entry;
   if (!nonEmptyString(title)) return fail("缺少 title");
@@ -162,8 +163,9 @@ function parseVerdict(entry: Record<string, unknown>, ruleId: string, stepNs: Re
   if (!nonEmptyString(keyStep)) return fail(`${verdict} 缺少 keyStep，没有证据的判定不输出`);
   if (!Array.isArray(evidenceSteps) || !evidenceSteps.every(nonEmptyString)) return fail(`${verdict} 的 evidenceSteps 不是字符串数组`);
   const evidence = [...new Set([keyStep, ...evidenceSteps].map((n) => n.trim()))];
-  const unknownSteps = evidence.filter((n) => !stepNs.has(n));
+  const unknownSteps = evidence.filter((n) => !stepNs.has(n) && !earlierNs.has(n));
   if (unknownSteps.length > 0) return fail(`引用了不存在的步骤：${unknownSteps.join(", ")}`);
+  if (!evidence.some((n) => stepNs.has(n))) return fail("只引用了背景里的用户原话，缺少本段里的证据");
 
   const cited = { ...base, keyStep: keyStep.trim(), evidenceSteps: evidence };
   if (verdict === "followed") return { ok: true, verdict: { ...cited, verdict } };
@@ -173,9 +175,15 @@ function parseVerdict(entry: Record<string, unknown>, ruleId: string, stepNs: Re
   return { ok: true, verdict: { ...cited, verdict, suggestion: suggestion.trim(), fixPrompt: fixPrompt.trim() } };
 }
 
-export function validateVerdicts(raw: unknown, rules: readonly Rule[], steps: readonly Step[]): ValidationResult {
+export function validateVerdicts(
+  raw: unknown,
+  rules: readonly Rule[],
+  steps: readonly Pick<Step, "n">[],
+  earlierUserMessages: readonly Pick<Step, "n">[] = [],
+): ValidationResult {
   const ruleIndex = new Map(rules.map((rule, i) => [rule.id, i]));
   const stepNs = new Set(steps.map((step) => step.n));
+  const earlierNs = new Set(earlierUserMessages.map((step) => step.n));
   const rejected: Rejection[] = [];
   const accepted = new Map<string, Verdict>();
 
@@ -198,7 +206,7 @@ export function validateVerdicts(raw: unknown, rules: readonly Rule[], steps: re
       } else if ((counts.get(ruleId) ?? 0) > 1) {
         rejected.push({ ruleId, reason: "同一条规则出现多个判定，无法确定取哪个，全部丢弃" });
       } else {
-        const parsed = parseVerdict(entry, ruleId, stepNs);
+        const parsed = parseVerdict(entry, ruleId, stepNs, earlierNs);
         if (parsed.ok) accepted.set(ruleId, parsed.verdict);
         else rejected.push({ ruleId, reason: parsed.reason });
       }
@@ -314,10 +322,11 @@ function parseSegmentRecord(raw: unknown, rules: readonly Rule[], steps: readonl
   const first = stepIndex.get(firstStep);
   const last = stepIndex.get(lastStep);
   if (first === undefined || last === undefined || first > last) throw new Error(`${label}的步骤范围 ${firstStep}–${lastStep} 在步骤文件里对不上`);
-  const checked = validateVerdicts({ verdicts }, rules, steps.slice(first, last + 1));
+  const earlierUserMessages = steps.slice(0, first).filter((step) => step.parentStep === null && step.kind === "user_message");
+  const checked = validateVerdicts({ verdicts }, rules, steps.slice(first, last + 1), earlierUserMessages);
   if (checked.rejected.length > 0) {
     const detail = checked.rejected.map((entry) => `${entry.ruleId ?? "?"}：${entry.reason}`).join("；");
-    throw new Error(`${label}的判定通不过校验（只能引用本段的步骤）：${detail}`);
+    throw new Error(`${label}的判定通不过校验（只能引用本段的步骤和之前用户说的话）：${detail}`);
   }
   return { ...base, status, verdicts: checked.verdicts, rejected: rejected.map(parseRejection) };
 }

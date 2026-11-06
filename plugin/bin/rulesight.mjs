@@ -661,7 +661,7 @@ var VERDICT_OUTPUT_SCHEMA = verdictOutputSchema("zh");
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "";
 }
-function parseVerdict(entry, ruleId, stepNs) {
+function parseVerdict(entry, ruleId, stepNs, earlierNs) {
   const fail = (reason2) => ({ ok: false, reason: reason2 });
   const { verdict, title, reason } = entry;
   if (!nonEmptyString(title)) return fail("\u7F3A\u5C11 title");
@@ -673,17 +673,19 @@ function parseVerdict(entry, ruleId, stepNs) {
   if (!nonEmptyString(keyStep)) return fail(`${verdict} \u7F3A\u5C11 keyStep\uFF0C\u6CA1\u6709\u8BC1\u636E\u7684\u5224\u5B9A\u4E0D\u8F93\u51FA`);
   if (!Array.isArray(evidenceSteps) || !evidenceSteps.every(nonEmptyString)) return fail(`${verdict} \u7684 evidenceSteps \u4E0D\u662F\u5B57\u7B26\u4E32\u6570\u7EC4`);
   const evidence = [...new Set([keyStep, ...evidenceSteps].map((n) => n.trim()))];
-  const unknownSteps = evidence.filter((n) => !stepNs.has(n));
+  const unknownSteps = evidence.filter((n) => !stepNs.has(n) && !earlierNs.has(n));
   if (unknownSteps.length > 0) return fail(`\u5F15\u7528\u4E86\u4E0D\u5B58\u5728\u7684\u6B65\u9AA4\uFF1A${unknownSteps.join(", ")}`);
+  if (!evidence.some((n) => stepNs.has(n))) return fail("\u53EA\u5F15\u7528\u4E86\u80CC\u666F\u91CC\u7684\u7528\u6237\u539F\u8BDD\uFF0C\u7F3A\u5C11\u672C\u6BB5\u91CC\u7684\u8BC1\u636E");
   const cited = { ...base, keyStep: keyStep.trim(), evidenceSteps: evidence };
   if (verdict === "followed") return { ok: true, verdict: { ...cited, verdict } };
   const { suggestion, fixPrompt } = entry;
   if (!nonEmptyString(suggestion) || !nonEmptyString(fixPrompt)) return fail("violated \u7F3A\u5C11 suggestion \u6216 fixPrompt");
   return { ok: true, verdict: { ...cited, verdict, suggestion: suggestion.trim(), fixPrompt: fixPrompt.trim() } };
 }
-function validateVerdicts(raw, rules, steps) {
+function validateVerdicts(raw, rules, steps, earlierUserMessages = []) {
   const ruleIndex = new Map(rules.map((rule, i) => [rule.id, i]));
   const stepNs = new Set(steps.map((step) => step.n));
+  const earlierNs = new Set(earlierUserMessages.map((step) => step.n));
   const rejected = [];
   const accepted = /* @__PURE__ */ new Map();
   const entries = isRecord(raw) ? raw.verdicts : void 0;
@@ -705,7 +707,7 @@ function validateVerdicts(raw, rules, steps) {
       } else if ((counts.get(ruleId) ?? 0) > 1) {
         rejected.push({ ruleId, reason: "\u540C\u4E00\u6761\u89C4\u5219\u51FA\u73B0\u591A\u4E2A\u5224\u5B9A\uFF0C\u65E0\u6CD5\u786E\u5B9A\u53D6\u54EA\u4E2A\uFF0C\u5168\u90E8\u4E22\u5F03" });
       } else {
-        const parsed = parseVerdict(entry, ruleId, stepNs);
+        const parsed = parseVerdict(entry, ruleId, stepNs, earlierNs);
         if (parsed.ok) accepted.set(ruleId, parsed.verdict);
         else rejected.push({ ruleId, reason: parsed.reason });
       }
@@ -793,10 +795,11 @@ function parseSegmentRecord(raw, rules, steps, stepIndex) {
   const first = stepIndex.get(firstStep);
   const last = stepIndex.get(lastStep);
   if (first === void 0 || last === void 0 || first > last) throw new Error(`${label}\u7684\u6B65\u9AA4\u8303\u56F4 ${firstStep}\u2013${lastStep} \u5728\u6B65\u9AA4\u6587\u4EF6\u91CC\u5BF9\u4E0D\u4E0A`);
-  const checked = validateVerdicts({ verdicts }, rules, steps.slice(first, last + 1));
+  const earlierUserMessages = steps.slice(0, first).filter((step) => step.parentStep === null && step.kind === "user_message");
+  const checked = validateVerdicts({ verdicts }, rules, steps.slice(first, last + 1), earlierUserMessages);
   if (checked.rejected.length > 0) {
     const detail = checked.rejected.map((entry) => `${entry.ruleId ?? "?"}\uFF1A${entry.reason}`).join("\uFF1B");
-    throw new Error(`${label}\u7684\u5224\u5B9A\u901A\u4E0D\u8FC7\u6821\u9A8C\uFF08\u53EA\u80FD\u5F15\u7528\u672C\u6BB5\u7684\u6B65\u9AA4\uFF09\uFF1A${detail}`);
+    throw new Error(`${label}\u7684\u5224\u5B9A\u901A\u4E0D\u8FC7\u6821\u9A8C\uFF08\u53EA\u80FD\u5F15\u7528\u672C\u6BB5\u7684\u6B65\u9AA4\u548C\u4E4B\u524D\u7528\u6237\u8BF4\u7684\u8BDD\uFF09\uFF1A${detail}`);
   }
   return { ...base, status, verdicts: checked.verdicts, rejected: rejected.map(parseRejection) };
 }
@@ -910,12 +913,12 @@ var PROMPT_TEXT = {
     output: "\u8F93\u51FA\uFF1A",
     outputError: "\u8F93\u51FA\uFF08\u62A5\u9519\uFF09\uFF1A",
     backgroundTitle: (p) => `# \u80CC\u666F\uFF08\u7B2C ${p.index}/${p.total} \u6BB5\uFF0C\u6B65\u9AA4 ${p.firstStep}\u2013${p.lastStep}\uFF09`,
-    backgroundNote: "\u8FD9\u4E00\u90E8\u5206\u53EA\u7528\u6765\u7406\u89E3\u524D\u60C5\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8BC1\u636E\uFF0C\u4E0D\u80FD\u5F15\u7528\u8FD9\u91CC\u7684\u5185\u5BB9\u4F5C\u4E3A\u6B65\u9AA4\u3002",
+    backgroundNote: "\u8FD9\u4E00\u90E8\u5206\u53EA\u7528\u6765\u7406\u89E3\u524D\u60C5\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8BC1\u636E\u3002\u552F\u4E00\u7684\u4F8B\u5916\u662F\u4E0B\u9762\u5E26\u6B65\u9AA4\u53F7\u7684\u7528\u6237\u539F\u8BDD\uFF1A\u5224\u65AD\u7528\u6237\u6709\u6CA1\u6709\u540C\u610F\u3001\u6536\u56DE\u6216\u7F29\u5C0F\u540C\u610F\u67D0\u4E2A\u64CD\u4F5C\u65F6\uFF0C\u53EF\u4EE5\u5F15\u7528\u8FD9\u4E9B\u6B65\u9AA4\u53F7\u3002",
     compactionHeading: "## \u4E0A\u4E00\u6B21\u4E0A\u4E0B\u6587\u538B\u7F29\u7684\u6458\u8981",
     noCompaction: "\uFF08\u8FD9\u4E00\u6BB5\u4E4B\u524D\u6CA1\u6709\u538B\u7F29\u8FC7\uFF09",
-    recentHeading: (count) => `## \u7528\u6237\u6700\u8FD1\u8BF4\u7684\u8BDD\uFF08\u6700\u8FD1 ${count} \u53E5\uFF0C\u65E7\u7684\u5728\u524D\uFF09`,
+    recentHeading: (count, omitted) => `## \u8FD9\u4E00\u6BB5\u4E4B\u524D\u7528\u6237\u8BF4\u8FC7\u7684\u8BDD\uFF08${count} \u53E5\uFF0C\u65E7\u7684\u5728\u524D${omitted > 0 ? `\uFF1B\u66F4\u65E9\u7684 ${omitted} \u53E5\u6CA1\u6709\u5217\u51FA` : ""}\uFF09`,
     noRecent: "\uFF08\u8FD9\u4E00\u6BB5\u4E4B\u524D\uFF0C\u7528\u6237\u8FD8\u6CA1\u6709\u8BF4\u8FC7\u8BDD\uFF09",
-    recentItem: (i) => `\u7528\u6237\u6D88\u606F ${i}\uFF1A`,
+    recentItem: (n) => `\u6B65\u9AA4 ${n}\uFF0C\u7528\u6237\uFF1A`,
     rulesHeading: (count) => `# \u89C4\u5219\uFF08\u5171 ${count} \u6761\uFF09`,
     sessionHeading: (title, count) => `# \u4F1A\u8BDD\uFF1A${title}\uFF08\u5171 ${count} \u6B65\uFF09`,
     segmentHeading: (title, count, total) => `# \u4F1A\u8BDD\uFF1A${title}\uFF08\u672C\u6BB5 ${count} \u6B65\uFF0C\u5168\u4F1A\u8BDD\u5171 ${total} \u6B65\uFF09`
@@ -927,12 +930,12 @@ var PROMPT_TEXT = {
     output: "Output: ",
     outputError: "Output (error): ",
     backgroundTitle: (p) => `# Background (segment ${p.index}/${p.total}, steps ${p.firstStep}\u2013${p.lastStep})`,
-    backgroundNote: "This part is only for understanding what came before. It is not evidence; do not cite anything here as a step.",
+    backgroundNote: "This part is only for understanding what came before. It is not evidence. The one exception is the user's own words below, which carry their step numbers: when judging whether the user agreed to, withdrew or narrowed consent for an action, you may cite those step numbers.",
     compactionHeading: "## Summary from the latest context compaction",
     noCompaction: "(no compaction before this segment)",
-    recentHeading: (count) => `## What the user said most recently (last ${count}, oldest first)`,
+    recentHeading: (count, omitted) => `## What the user said before this segment (${count}, oldest first${omitted > 0 ? `; ${omitted} earlier ones not shown` : ""})`,
     noRecent: "(the user has not said anything before this segment)",
-    recentItem: (i) => `User message ${i}:`,
+    recentItem: (n) => `Step ${n}, user:`,
     rulesHeading: (count) => `# Rules (${count})`,
     sessionHeading: (title, count) => `# Session: ${title} (${count} steps)`,
     segmentHeading: (title, count, total) => `# Session: ${title} (${count} steps in this segment, ${total} in the whole session)`
@@ -942,8 +945,8 @@ function clip2(text, max, lang2 = "zh") {
   const chars = Array.from(text);
   return chars.length > max ? `${chars.slice(0, max).join("")}${PROMPT_TEXT[lang2].truncated}` : text;
 }
-var SEGMENT_NOTE_ZH = `\u8FD9\u4EFD\u4F1A\u8BDD\u592A\u957F\uFF0C\u88AB\u5206\u6210\u51E0\u6BB5\uFF0C\u6BCF\u6B21\u53EA\u7ED9\u4F60\u5176\u4E2D\u4E00\u6BB5\u3002\u53EA\u5224\u5B9A\u8FD9\u4E00\u6BB5\u91CC\u80FD\u770B\u5230\u7684\u884C\u4E3A\uFF1A\u89C4\u5219\u7BA1\u7684\u60C5\u5F62\u6CA1\u6709\u5728\u8FD9\u4E00\u6BB5\u91CC\u51FA\u73B0\uFF0C\u5C31\u5224 not_applicable\uFF0C\u4E0D\u8981\u56E0\u4E3A\u770B\u4E0D\u5230\u8FDD\u53CD\u5C31\u5224 followed\u3002\u8F93\u5165\u5F00\u5934\u7684\u201C\u80CC\u666F\u201D\u53EA\u7528\u6765\u7406\u89E3\u524D\u60C5\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8BC1\u636E\uFF0C\u4E0D\u80FD\u5F15\u7528\u91CC\u9762\u7684\u5185\u5BB9\u5F53\u6B65\u9AA4\uFF1B\u6B65\u9AA4\u53F7\u53EA\u80FD\u7528\u8FD9\u4E00\u6BB5\u91CC\u51FA\u73B0\u7684\u3002`;
-var SEGMENT_NOTE_EN = `This session is too long, so it was split into segments and you get one segment at a time. Judge only the behaviour visible in this segment: if the situation a rule covers does not appear in this segment, judge not_applicable; do not judge followed just because you see no violation. The "Background" at the start of the input is only for understanding what came before. It is not evidence and nothing in it may be cited as a step; only use step numbers that appear in this segment.`;
+var SEGMENT_NOTE_ZH = `\u8FD9\u4EFD\u4F1A\u8BDD\u592A\u957F\uFF0C\u88AB\u5206\u6210\u51E0\u6BB5\uFF0C\u6BCF\u6B21\u53EA\u7ED9\u4F60\u5176\u4E2D\u4E00\u6BB5\u3002\u53EA\u5224\u5B9A\u8FD9\u4E00\u6BB5\u91CC\u80FD\u770B\u5230\u7684\u884C\u4E3A\uFF1A\u89C4\u5219\u7BA1\u7684\u60C5\u5F62\u6CA1\u6709\u5728\u8FD9\u4E00\u6BB5\u91CC\u51FA\u73B0\uFF0C\u5C31\u5224 not_applicable\uFF0C\u4E0D\u8981\u56E0\u4E3A\u770B\u4E0D\u5230\u8FDD\u53CD\u5C31\u5224 followed\u3002\u8F93\u5165\u5F00\u5934\u7684\u201C\u80CC\u666F\u201D\u53EA\u7528\u6765\u7406\u89E3\u524D\u60C5\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8BC1\u636E\uFF0C\u4E0D\u80FD\u5F15\u7528\u91CC\u9762\u7684\u5185\u5BB9\u5F53\u6B65\u9AA4\uFF1B\u6B65\u9AA4\u53F7\u53EA\u80FD\u7528\u8FD9\u4E00\u6BB5\u91CC\u51FA\u73B0\u7684\u3002\u552F\u4E00\u7684\u4F8B\u5916\uFF1A\u80CC\u666F\u91CC\u5E26\u6B65\u9AA4\u53F7\u7684\u7528\u6237\u539F\u8BDD\uFF0C\u53EF\u4EE5\u5728\u5224\u65AD\u7528\u6237\u6709\u6CA1\u6709\u540C\u610F\u3001\u6536\u56DE\u6216\u7F29\u5C0F\u540C\u610F\u65F6\u5F15\u7528\uFF08\u4F8B\u5982\u7528\u6237\u5728\u524D\u9762\u7684\u6BB5\u91CC\u8BF4\u8FC7\u201C\u5220\u5427\uFF0C\u4E0D\u7528\u95EE\u6211\u201D\uFF0C\u8FD9\u4E00\u6BB5\u91CC agent \u624D\u5220\uFF09\uFF0C\u8FD9\u65F6\u8BC1\u636E\u91CC\u8FD8\u5FC5\u987B\u6709\u8FD9\u4E00\u6BB5\u91CC agent \u52A8\u624B\u7684\u90A3\u4E00\u6B65\u3002`;
+var SEGMENT_NOTE_EN = `This session is too long, so it was split into segments and you get one segment at a time. Judge only the behaviour visible in this segment: if the situation a rule covers does not appear in this segment, judge not_applicable; do not judge followed just because you see no violation. The "Background" at the start of the input is only for understanding what came before. It is not evidence and nothing in it may be cited as a step; only use step numbers that appear in this segment. The one exception: the user's own words in the background, which carry their step numbers, may be cited when judging whether the user agreed to, withdrew or narrowed consent (for example the user said "go ahead and delete it, no need to ask" in an earlier segment and the agent deletes in this one); the evidence must then also include the step in this segment where the agent acted.`;
 var SEGMENT_NOTE = { zh: SEGMENT_NOTE_ZH, en: SEGMENT_NOTE_EN };
 function indent(text) {
   return text.split("\n").map((line) => `  ${line}`).join("\n");
@@ -964,15 +967,15 @@ function formatRule(rule) {
 }
 function formatBackground(segment, lang2) {
   const t = PROMPT_TEXT[lang2];
-  const { summary, recentUserMessages, position } = segment.context;
-  const recent = recentUserMessages.length === 0 ? t.noRecent : recentUserMessages.map((text, i) => `${t.recentItem(i + 1)}
+  const { summary, earlierUserMessages, omittedUserMessages, position } = segment.context;
+  const recent = earlierUserMessages.length === 0 ? t.noRecent : earlierUserMessages.map(({ n, text }) => `${t.recentItem(n)}
 ${indent(text)}`).join("\n\n");
   return [
     t.backgroundTitle(position),
     t.backgroundNote,
     t.compactionHeading,
     summary ?? t.noCompaction,
-    t.recentHeading(recentUserMessages.length),
+    t.recentHeading(earlierUserMessages.length, omittedUserMessages),
     recent
   ].join("\n\n");
 }
@@ -1113,7 +1116,7 @@ async function judgeSegment(options, segment) {
     if (attempt > 1) await sleep(retryDelayMs);
     try {
       const result = await run(prompt, { model });
-      const { verdicts, rejected } = validateVerdicts(result.raw, rules, segment.steps);
+      const { verdicts, rejected } = validateVerdicts(result.raw, rules, segment.steps, segment.context.earlierUserMessages);
       return { index: segment.index, firstStep, lastStep, status: "ok", costUsd: result.costUsd, turns: result.turns, durationMs: result.durationMs, verdicts, rejected };
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
@@ -1231,8 +1234,8 @@ function parseRules(markdown, displayPath3) {
 var DEFAULT_MAX_SEGMENT_CHARS = 2e5;
 var COMPACTIONS = new Set(Object.values(COMPACTION_LABELS).map((labels) => labels.compaction));
 var COMPACTION_SUMMARIES = new Set(Object.values(COMPACTION_LABELS).map((labels) => labels.summary));
-var RECENT_USER_MESSAGES = 5;
-var RECENT_USER_MESSAGE_CHARS = 500;
+var EARLIER_USER_MESSAGE_CHARS = 500;
+var EARLIER_USER_MESSAGES_BUDGET = 2e4;
 var CUT_PREFERENCE = ["compaction", "user", "main", "sub"];
 function cutKindOf(step) {
   if (step.parentStep !== null) return "sub";
@@ -1296,12 +1299,12 @@ function planSegments(session, options = {}) {
   if (!Number.isInteger(maxChars) || maxChars <= 0) throw new Error(`maxChars \u5FC5\u987B\u662F\u6B63\u6574\u6570\uFF1A${maxChars}`);
   const groups = splitUnits(toUnits(session.steps, maxChars, lang2), maxChars).map((group) => group.flatMap((unit) => unit.steps));
   let summary = null;
-  let recent = [];
+  const earlier = [];
   const remember = (steps) => {
     for (const step of steps) {
       if (step.parentStep !== null) continue;
       if (step.kind === "system" && COMPACTION_SUMMARIES.has(step.summary)) summary = step.text;
-      else if (step.kind === "user_message") recent = [...recent, step.text].slice(-RECENT_USER_MESSAGES);
+      else if (step.kind === "user_message") earlier.push({ n: step.n, text: clip2(step.text, EARLIER_USER_MESSAGE_CHARS, lang2) });
     }
   };
   remember(options.before ?? []);
@@ -1309,18 +1312,31 @@ function planSegments(session, options = {}) {
     const first = steps[0];
     const last = steps.at(-1);
     if (first === void 0 || last === void 0) throw new Error("\u5207\u6BB5\u5207\u51FA\u4E86\u7A7A\u7684\u4E00\u6BB5");
+    const kept = newestWithin(earlier, EARLIER_USER_MESSAGES_BUDGET);
     const segment = {
       index: i + 1,
       steps,
       context: {
         summary,
-        recentUserMessages: recent.map((text) => clip2(text, RECENT_USER_MESSAGE_CHARS, lang2)),
+        earlierUserMessages: kept,
+        omittedUserMessages: earlier.length - kept.length,
         position: { index: i + 1, total: groups.length, firstStep: first.n, lastStep: last.n }
       }
     };
     remember(steps);
     return segment;
   });
+}
+function newestWithin(messages, budget) {
+  let used = 0;
+  let start = messages.length;
+  while (start > 0) {
+    const chars = Array.from(messages[start - 1]?.text ?? "").length;
+    if (used + chars > budget) break;
+    used += chars;
+    start--;
+  }
+  return messages.slice(start);
 }
 function sliceByTime(session, range) {
   const { fromMs = Number.NEGATIVE_INFINITY, toMs = Number.POSITIVE_INFINITY } = range;
@@ -1462,11 +1478,11 @@ function slimForReport(data) {
   const from = first === void 0 ? 0 : index.get(first.firstStep) ?? 0;
   const to = last === void 0 ? session.steps.length - 1 : index.get(last.lastStep) ?? session.steps.length - 1;
   const cited = new Set(verdicts.verdicts.flatMap((verdict) => verdict.verdict === "not_applicable" ? [] : verdict.evidenceSteps));
-  const steps = session.steps.slice(from, to + 1).map((step) => {
+  const steps = session.steps.filter((step, i) => i >= from && i <= to || cited.has(step.n)).map((step) => {
     if (cited.has(step.n)) return step;
     return step.kind === "tool_call" ? { ...step, tool: { name: step.tool.name, input: {}, output: null, isError: step.tool.isError }, raw: [] } : { ...step, text: "", raw: [] };
   });
-  const times = steps.map((step) => step.at).filter((at) => at !== null);
+  const times = session.steps.slice(from, to + 1).map((step) => step.at).filter((at) => at !== null);
   const startedAt = from === 0 ? session.startedAt : times[0] ?? session.startedAt;
   const endedAt = to === session.steps.length - 1 ? session.endedAt : times.at(-1) ?? session.endedAt;
   return { session: { ...session, steps, startedAt, endedAt }, verdicts };
