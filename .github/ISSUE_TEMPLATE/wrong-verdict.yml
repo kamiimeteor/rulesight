@@ -1,0 +1,60 @@
+name: Wrong verdict
+description: A rule was judged followed, violated or not applicable, and that verdict is wrong. 判错了。
+title: "Wrong verdict: "
+labels: ["wrong verdict"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for checking the report. Please don't paste the session itself, or anything private from it. The rule and a sentence or two about what happened are enough.
+        感谢你看完报告。请不要贴会话内容或其中的私人信息，写清规则和一两句经过就够了。中文也可以。
+  - type: input
+    id: version
+    attributes:
+      label: Rulesight version
+      description: Shown in Claude Code under /plugin, or run `claude plugin list`.
+      placeholder: "0.1.6"
+    validations:
+      required: true
+  - type: textarea
+    id: rule
+    attributes:
+      label: The rule
+      description: Copy the rule text as it appears in the report.
+      placeholder: "Ask before deleting any file."
+    validations:
+      required: true
+  - type: dropdown
+    id: given
+    attributes:
+      label: What Rulesight said
+      options:
+        - Followed
+        - Violated
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: expected
+    attributes:
+      label: What it should have said
+      options:
+        - Followed
+        - Violated
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it's wrong
+      description: In your own words, what actually happened in the session. Leave out names, paths and anything private.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I didn't paste session content or private details.
+          required: true

@@ -8,6 +8,10 @@ Rulesight 是一个 Claude Code 插件：对照你写给 Claude 的规则（`CLA
 
 > v0.1，还在早期。判定由模型完成，会判错。遵守或违反要先看指出的那一步，再下结论。
 
+![Rulesight 报告：1 条违反、4 条遵守、2 条不适用，证据步骤标在时间线上](docs/images/report-overview.png)
+
+*演示会话：一个虚构的待办 App，报告是英文界面。中文会话会出中文报告。*
+
 ## 它能告诉你什么
 
 比如你的 `CLAUDE.md` 里写了“删除文件前先问我”，报告会写：
@@ -18,6 +22,10 @@ Rulesight 是一个 Claude Code 插件：对照你写给 Claude 的规则（`CLA
 - **建议**：一句处理建议，加一条可以直接复制给 Claude 的指令。
 
 被权限系统或沙盒拦下的违规尝试也算违反。Rulesight 回答的是“agent 有没有照规则做”，不是“最后有没有出事”。
+
+<img src="docs/images/report-detail.png" width="480" alt="一条违反：hook 拦下了 rm，agent 改用 git rm，修法建议把所有删除命令都拦住">
+
+*演示里 hook 拦下了 `rm`，agent 就改用 `git rm`。报告写明了这次绕过，并建议把所有删除文件的办法都拦住。*
 
 ## 和 hook 的关系
 
@@ -112,7 +120,7 @@ claude plugin uninstall rulesight@rulesight
 
 ## 反馈
 
-判错、读不了会话、报告看不懂，都欢迎开 issue。附上 Claude Code 版本和报错原文就够了，请不要贴会话内容。
+判错、读不了会话、报告看不懂，都欢迎开 issue。判错了请用[判错反馈表](https://github.com/kamiimeteor/rulesight/issues/new?template=wrong-verdict.yml)，只要填规则和经过，不用贴会话。其他问题附上 Claude Code 版本和报错原文就够了，请不要贴会话内容。
 
 ## 开发
 

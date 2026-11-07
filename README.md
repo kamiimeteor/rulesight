@@ -8,6 +8,10 @@ It is for people who maintain a `CLAUDE.md` and do not read code: designers, pro
 
 > v0.1, and still early. A model makes the verdicts, and some of them will be wrong. Read the step a verdict points to before you decide.
 
+![A Rulesight report: one violated rule, four followed, two not applicable, with the evidence steps on a timeline](docs/images/report-overview.png)
+
+*A demo session in a made-up todo app.*
+
 ## What the report shows
 
 Suppose your `CLAUDE.md` says "ask me before you delete files." The report can read like this:
@@ -18,6 +22,10 @@ Suppose your `CLAUDE.md` says "ask me before you delete files." The report can r
 - **What to do about it.** One suggestion, plus an instruction you can paste back to Claude.
 
 An attempt the permission system or the sandbox stopped still counts as a violation. Rulesight answers whether the agent followed the rule, including when the attempt never went through.
+
+<img src="docs/images/report-detail.png" width="480" alt="A violated verdict: a hook blocked rm, the agent used git rm instead, and the fix suggests blocking every delete command">
+
+*In the demo, a hook blocked `rm`, so the agent ran `git rm` instead. The report names the workaround and suggests blocking every way to delete a file.*
 
 ## Rulesight and hooks
 
@@ -114,7 +122,7 @@ claude plugin uninstall rulesight@rulesight
 
 ## Feedback
 
-A wrong verdict, a session that will not load, a report that is hard to follow: please open an issue. The Claude Code version and the error text are enough. Please do not paste the session.
+A wrong verdict, a session that will not load, a report that is hard to follow: please open an issue. For a wrong verdict, use the [wrong verdict form](https://github.com/kamiimeteor/rulesight/issues/new?template=wrong-verdict.yml); it asks for the rule and what happened, not the session. Otherwise the Claude Code version and the error text are enough. Please do not paste the session.
 
 ## Development
 
