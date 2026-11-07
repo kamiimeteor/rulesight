@@ -1,6 +1,6 @@
 ---
 name: rulesight
-description: 对照你的 CLAUDE.md 规则检查当前这场会话，给每条规则判定遵守、违反或不适用，附上证据，并打开一份报告。
+description: Check the current session against your CLAUDE.md rules. Each rule is judged followed, violated or not applicable, with the step that shows it, and a report opens at the end.
 disable-model-invocation: true
 ---
 

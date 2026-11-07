@@ -1,13 +1,13 @@
 {
   "name": "rulesight",
-  "description": "Rulesight：检查 Claude Code 会话有没有遵守你定的规则",
+  "description": "Rulesight: check whether a Claude Code session followed the rules you set",
   "owner": {
     "name": "Kami"
   },
   "plugins": [
     {
       "name": "rulesight",
-      "description": "对照你写给 Claude 的规则（CLAUDE.md）检查这场会话：每条规则判成遵守、违反或不适用，指出是哪一步，生成一份能看懂的报告",
+      "description": "Check this session against the rules you wrote for Claude (CLAUDE.md): each rule is judged followed, violated or not applicable, with the step that shows it, in a report you can read.",
       "version": "0.1.6",
       "source": "./plugin",
       "author": {
