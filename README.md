@@ -51,7 +51,7 @@ When a rule was broken, the suggestion is aimed at the reason, so the same mista
 
 - [Claude Code](https://code.claude.com), already signed in.
 - Node.js 18 or newer ([nodejs.org](https://nodejs.org); on a Mac with Homebrew, `brew install node` works too).
-- A few rules in `CLAUDE.md` that you want Claude to follow. A global `~/.claude/CLAUDE.md` or one in the project both work.
+- A few rules in `CLAUDE.md` that you want Claude to follow. A global `~/.claude/CLAUDE.md` or one in the project both work. No rules yet? Copy some from [examples/CLAUDE.md](examples/CLAUDE.md).
 
 ## Install
 

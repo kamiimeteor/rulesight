@@ -49,7 +49,7 @@ Rulesight 只检查，不拦截：它在会话结束后翻记录，不是沙盒�
 
 - [Claude Code](https://code.claude.com)，已经登录。
 - Node.js 18 或更新的版本（[nodejs.org](https://nodejs.org)；Mac 上装了 Homebrew 的话也可以 `brew install node`）。
-- `CLAUDE.md` 里写了几条你希望 Claude 遵守的规则（全局的 `~/.claude/CLAUDE.md` 或项目里的都行）。
+- `CLAUDE.md` 里写了几条你希望 Claude 遵守的规则（全局的 `~/.claude/CLAUDE.md` 或项目里的都行）。还没写过的话，可以从 [examples/CLAUDE.zh-CN.md](examples/CLAUDE.zh-CN.md) 里挑几条。
 
 ## 安装
 
