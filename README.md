@@ -12,6 +12,18 @@ It is for people who maintain a `CLAUDE.md` and do not read code: designers, pro
 
 *A demo session in a made-up todo app.*
 
+## Why not just ask Claude?
+
+You could type "did you follow my rules?" into the same session, or scroll the transcript yourself.
+
+| | Ask Claude in the same session | Read the transcript yourself | Rulesight |
+| --- | --- | --- | --- |
+| **Who judges** | The agent that did the work | You | A new Claude with no tools, which did none of the work |
+| **What it sees** | Whatever is still in its context. Older steps may already be compacted | Everything, if you have the hours | The whole log, including steps from before compaction and every sub-agent |
+| **What you get** | An answer from memory | Whatever you happen to find | A verdict per rule, each followed or violated one tied to a step you can open |
+
+Every cited step is checked against the session. A followed or violated verdict that names no step, or names a step the session does not have, is thrown out rather than shown.
+
 ## What the report shows
 
 Suppose your `CLAUDE.md` says "ask me before you delete files." The report can read like this:
