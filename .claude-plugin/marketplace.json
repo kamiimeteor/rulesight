@@ -2,16 +2,16 @@
   "name": "rulesight",
   "description": "Rulesight: check whether a Claude Code session followed the rules you set",
   "owner": {
-    "name": "Kami"
+    "name": "kamiimeteor"
   },
   "plugins": [
     {
       "name": "rulesight",
-      "description": "Check this session against the rules you wrote for Claude (CLAUDE.md): each rule is judged followed, violated or not applicable, with the step that shows it, in a report you can read.",
+      "description": "Check this session against the rules you wrote for Claude (CLAUDE.md): each rule is judged followed, violated or not applicable; followed and violated verdicts point to the step that shows it, in a report you can read.",
       "version": "0.1.6",
       "source": "./plugin",
       "author": {
-        "name": "Kami"
+        "name": "kamiimeteor"
       },
       "homepage": "https://github.com/kamiimeteor/rulesight",
       "repository": "https://github.com/kamiimeteor/rulesight",

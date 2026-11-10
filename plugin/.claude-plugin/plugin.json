@@ -1,9 +1,9 @@
 {
   "name": "rulesight",
   "version": "0.1.6",
-  "description": "Check this session against the rules you wrote for Claude (CLAUDE.md): each rule is judged followed, violated or not applicable, with the step that shows it, in a report you can read.",
+  "description": "Check this session against the rules you wrote for Claude (CLAUDE.md): each rule is judged followed, violated or not applicable; followed and violated verdicts point to the step that shows it, in a report you can read.",
   "author": {
-    "name": "Kami"
+    "name": "kamiimeteor"
   },
   "homepage": "https://github.com/kamiimeteor/rulesight",
   "repository": "https://github.com/kamiimeteor/rulesight",
