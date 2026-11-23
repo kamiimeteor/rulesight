@@ -29,7 +29,7 @@ Every cited step is checked against the session. A followed or violated verdict 
 | | Claude Code's `/code-review` | Rulesight |
 | --- | --- | --- |
 | **What it reviews** | Code changes (the diff) | The session: the agent's steps, including the tools it called and the work its sub-agents did |
-| **What it reports** | On most models, only bugs and `CLAUDE.md` violations, since [2.1.328](https://code.claude.com/docs/en/changelog) (19 November 2026) | A verdict for each rule — followed, violated, or not applicable — with the steps used as evidence |
+| **What it reports** | On most models, only bugs and `CLAUDE.md` violations, since [2.1.328](https://code.claude.com/docs/en/changelog) (19 November 2026) | A verdict for each rule (followed, violated, or not applicable), with the steps behind each followed or violated verdict |
 
 The two complement each other: `/code-review` looks at the diff, Rulesight looks at what the agent did in the session.
 
