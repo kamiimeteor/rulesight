@@ -24,6 +24,15 @@ Rulesight 是一个 Claude Code 插件：对照你写给 Claude 的规则（`CLA
 
 引用的每一步都会和会话核对。判了遵守或违反却没给步骤，或者给的步骤在会话里不存在，这条判定直接丢掉，不会出现在报告里。
 
+## 和 Claude Code 的 `/code-review` 有什么不同
+
+| | Claude Code 的 `/code-review` | Rulesight |
+| --- | --- | --- |
+| **看什么** | 代码改动（diff） | 这场会话：agent 的步骤，包括它调用的工具和子 agent 做的事 |
+| **报什么** | 自 [2.1.328](https://code.claude.com/docs/en/changelog)（2026 年 11 月 19 日）起，在大多数模型上只报 bug 和 `CLAUDE.md` 违规 | 每条规则一个判定（遵守 / 违反 / 不适用），遵守和违反都会附上作为证据的步骤 |
+
+两者互补：`/code-review` 看的是代码改动，Rulesight 看的是会话里 agent 做了什么。
+
 ## 它能告诉你什么
 
 比如你的 `CLAUDE.md` 里写了“删除文件前先问我”，报告会写：
